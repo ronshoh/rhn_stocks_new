@@ -1,0 +1,6 @@
+accuracy_window_1 = 0.5412
+accuracy_window_2 = 0.5285
+total_accuracy = 0.5341
+corr_window_1 = 0.0624
+corr_window_2 = 0.0408
+corr_total = 0.0508
