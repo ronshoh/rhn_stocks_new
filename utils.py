@@ -25,6 +25,7 @@ def get_command_line_args(Config):
     ap.add_argument("--depth", type=int, nargs=1, default=None)
     ap.add_argument("--out_size", type=int, nargs=1, default=None)
     ap.add_argument("--adaptive_optimizer", type=str, nargs=1, default=None)
+    ap.add_argument("--loss_func", type=str, nargs=1, default=None)
     ap.add_argument("--reset_weights_flag", type=bool, nargs=1, default=None)
     ap.add_argument("--start_time", type=int, nargs=1, default=None)
     ap.add_argument("--wind_step_size", type=int, nargs=1, default=None)
@@ -39,6 +40,8 @@ def get_command_line_args(Config):
     ap.add_argument("--server", type=bool, nargs=1, default=False)
     ap.add_argument("--gpu", type=int, nargs='*', default=-1)
     ap.add_argument("--num_of_proc", type=int, nargs=1, default=1)
+    ap.add_argument("--tf_seed", type=int, nargs=1, default=None)
+    ap.add_argument("--numpy_seed", type=int, nargs=1, default=None)
 
     args = ap.parse_args()
     for arg in vars(args):

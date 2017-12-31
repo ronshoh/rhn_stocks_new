@@ -20,7 +20,7 @@ class Config():
 
     # architecture
     weight_decay = 1e-07
-    max_grad_norm = 0.8
+    max_grad_norm = 2000000000
     drop_i = 0.05
     drop_h = 0.3
     drop_o = 0.75
@@ -33,6 +33,7 @@ class Config():
     num_layers = 1
     depth = 6
     out_size = 1
+    loss_func = "mse_cost_std_normalized"
 
     estimation_flag = True
     esimation_epoch = 5
@@ -53,6 +54,9 @@ class Config():
     # database
     DB_name = 'CCver5_db'
     concat_tar_2_feat = False
+
+    numpy_seed = None
+    tf_seed = None
 
 get_command_line_args(Config)
 
@@ -112,8 +116,8 @@ def run_full_epoch(session, m, features, targets, eval_op, config, verbose=False
 
 def run_algo():
 
-    Config.numpy_seed = get_rand_seed() if Config.random else 1000
-    Config.tf_seed = get_rand_seed() if Config.random else 1000
+    Config.numpy_seed = Config.numpy_seed if Config.numpy_seed is not None else get_rand_seed()
+    Config.tf_seed = Config.tf_seed if Config.tf_seed is not None else get_rand_seed()
     Config.batch_size = targets.shape[0]
     Config.num_of_features = features.shape[2]
 
@@ -166,7 +170,8 @@ def run_algo():
             if config.reset_weights_flag:
                 reset_weights()
 
-            mtrain.reset_asgd(session)
+            if config.max_max_epoch > config.switch_to_asgd:
+                mtrain.reset_asgd(session)
             lr_decay = 1.0
             best_acc = 0.0
             best_corr = 0.0
@@ -323,8 +328,6 @@ def run_algo():
 
 
 ##### pre-main #####
-if not Config.random:
-    np.random.seed(1000)
 config = Config()
 
 print("loading DB")

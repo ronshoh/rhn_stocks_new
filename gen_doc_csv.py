@@ -2,38 +2,6 @@ import numpy as np
 import os
 import datetime
 
-class Config():
-
-    # architecture
-    weight_decay = 3e-06
-    max_grad_norm = 0.8
-    drop_i = 0.0
-    drop_h = 0.3
-    drop_o = 0.75
-    hidden_size = 200
-    mask = 0.59
-    num_steps = 25
-    init_scale = 0.04
-    state_gate = True
-    init_bias = -2.5
-    num_layers = 1
-    depth = 4
-
-    # which optimmizer to use - "RMSProp" "Adam"
-    adaptive_optimizer = "RMSProp"
-
-    # windows
-    reset_weights_flag = True
-    start_time = 4000
-    wind_step_size = 100
-    switch_to_asgd = 40
-    decay_epochs = np.array([10,15,20,25,30,35,40])
-    learning_rate = 0.001
-    lr_decay = [1.3,1.3,1.3,1.3,1.3,1.3,(0.1/(1.3**6))]
-    max_max_epoch = 40
-
-    # database
-    DB_name = 'CCver5_db'
 
 scores_list = ["accuracy_window_1", "accuracy_window_2", "total_accuracy", "corr_window_1",
                "corr_window_2", "corr_total"]
@@ -42,10 +10,13 @@ doc_path_list = ["C:\\Users\\User\\Desktop\\ron_try\\rhn_ptb_new\\documentation"
              "\\\\132.72.53.182\\common_space\\tensorflow-all\\ron\\rhn_stocks_new\\documentation"]
 
 def get_attr_list():
-    attr_list = []
-    for a in sorted(Config.__dict__):
-        if a.startswith("__"): continue
-        attr_list.append(a)
+    attr_list = ["decay_epochs", "lr_decay", "init_scale", "start_time", "num_steps", "init_bias", "num_layers",
+                 "DB_name", "adaptive_optimizer", "learning_rate", "loss_func", "wind_step_size", "switch_to_asgd",
+                 "max_max_epoch", "depth", "state_gate", "max_grad_norm", "weight_decay", "hidden_size", "mask",
+                 "drop_i", "drop_h", "drop_o"]
+    # for a in sorted(Config.__dict__):
+    #     if a.startswith("__"): continue
+    #     attr_list.append(a)
     return attr_list
 
 def getKey(item):
@@ -75,6 +46,8 @@ def find_attr_val(attr, lines):
         if attr in line:
             val = line.split('=')[-1].replace(' ', '').replace('\n', '').replace(',', ' ; ')
             return val
+    if attr == "loss_func":
+        return "mse"
     print('attribute ' + attr + ' was not found.. returning NULL')
     return 'NULL'
 

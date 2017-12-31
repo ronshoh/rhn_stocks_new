@@ -63,22 +63,17 @@ class Model(object):
         self._predictions = tf.reshape(scores, [batch_size, num_steps])
 
         weights = self._mask
-        # if config.std_normalization:
-        #     rel_tars = self._targets[tf.equal(weights,1.0)]
-        #     _, var_tars = tf.nn.moments(rel_tars, axes=[0])
-        #     rel_pred = self._predictions[tf.equal(weights,1.0)]
-        #     _, var_pred = tf.nn.moments(rel_pred, axes=[0])
-        #     weights = weights/(tf.sqrt(var_tars*var_pred))
-
-        loss = tf.losses.mean_squared_error(
-            self._targets,
-            self._predictions,
-            weights=weights,
-            scope="MSE"
-        )
 
 
-        pred_loss = tf.reduce_sum(loss) # / (tf.reduce_sum(self._mask) + epsilon)
+        if config.loss_func == "mse":
+            pred_loss = mse_cost(self._targets, self._predictions, weights)
+        elif config.loss_func == "mse_cost_std_normalized":
+            pred_loss = mse_cost(self._targets, self._predictions, weights)
+        elif config.loss_func == "minus_corr":
+            pred_loss = minus_corr_cost(self._targets, self._predictions, weights)
+        else:
+            print("invalid cost_func.. returning")
+            return
 
         self._cost = cost = pred_loss
 
@@ -118,37 +113,39 @@ class Model(object):
                 exit()
             self._train_op_ad = optimizer_ad.apply_gradients(zip(grads, self._tvars))
 
-            with tf.variable_scope('ASGD'):
-                self._counter = tf.Variable(0.0, trainable=False)
-                optimizer_sgd = tf.train.GradientDescentOptimizer(self.lr)
+            if config.max_max_epoch > config.switch_to_asgd:
+                with tf.variable_scope('ASGD'):
+                    self._counter = tf.Variable(0.0, trainable=False)
+                    optimizer_sgd = tf.train.GradientDescentOptimizer(self.lr)
 
-                self._final_weights = []
-                self._temp_weights = []
-                for var in self._tvars:
-                    self._final_weights.append(tf.get_variable(var.op.name + '_final',
-                                                               initializer=tf.zeros_like(var, dtype=tf.float32),
-                                                               trainable=False))
-                    self._temp_weights.append(tf.get_variable(var.op.name + '_temp',
-                                                              initializer=tf.zeros_like(var, dtype=tf.float32),
-                                                              trainable=False))
+                    self._final_weights = []
+                    self._temp_weights = []
+                    for var in self._tvars:
+                        self._final_weights.append(tf.get_variable(var.op.name + '_final',
+                                                                   initializer=tf.zeros_like(var, dtype=tf.float32),
+                                                                   trainable=False))
+                        self._temp_weights.append(tf.get_variable(var.op.name + '_temp',
+                                                                  initializer=tf.zeros_like(var, dtype=tf.float32),
+                                                                  trainable=False))
 
 
 
-                self._train_op_sgd = optimizer_sgd.apply_gradients(zip(grads, self._tvars))
+                    self._train_op_sgd = optimizer_sgd.apply_gradients(zip(grads, self._tvars))
 
-                adder = tf.Variable(1.0, trainable=False)
-                self._add_counter_op = tf.assign_add(self._counter, adder)
-                self._asgd_acc_op = [tf.assign_add(self._final_weights[i], var) for i, var in
-                                     enumerate(self._tvars)]
-                self._reset_accumulation_op = [tf.assign(self._final_weights[i], tf.zeros_like(var)) for i, var in
-                                               enumerate(self._final_weights)]
+                    adder = tf.Variable(1.0, trainable=False)
+                    self._add_counter_op = tf.assign_add(self._counter, adder)
+                    self._asgd_acc_op = [tf.assign_add(self._final_weights[i], var) for i, var in
+                                         enumerate(self._tvars)]
+                    self._reset_accumulation_op = [tf.assign(self._final_weights[i], tf.zeros_like(var)) for i, var in
+                                                   enumerate(self._final_weights)]
 
-                self._set_asgd_weights = [tf.assign(self._tvars[i], tf.divide(var, self._counter)) for i, var
-                                          in enumerate(self._final_weights)]
-                self._store_weights = [tf.assign(self._temp_weights[i], var) for i, var in enumerate(self._tvars)]
+                    self._set_asgd_weights = [tf.assign(self._tvars[i], tf.divide(var, self._counter)) for i, var
+                                              in enumerate(self._final_weights)]
+                    self._store_weights = [tf.assign(self._temp_weights[i], var) for i, var in enumerate(self._tvars)]
 
-                self._return_regular_weights = [tf.assign(self._tvars[i], var) for i, var
-                                                in enumerate(self._temp_weights)]
+                    self._return_regular_weights = [tf.assign(self._tvars[i], var) for i, var
+                                                    in enumerate(self._temp_weights)]
+
 
 
 
@@ -157,8 +154,6 @@ class Model(object):
         session.run(tf.assign(self.counter, counter * 0))
         session.run(self.reset_accumulation_op)
 
-    def assign_lr(self, session, lr_value):
-        session.run(tf.assign(self.lr, lr_value))
 
     def store_set_asgd_weights(self, session):
         session.run(self.store_weights)
@@ -199,6 +194,9 @@ class Model(object):
     @property
     def temp_weights(self):
         return self._temp_weights
+
+    def assign_lr(self, session, lr_value):
+        session.run(tf.assign(self.lr, lr_value))
 
     @property
     def tvars(self):
@@ -378,3 +376,46 @@ def linear(args, output_size, bias, bias_start=None, scope=None):
             bias_term = vs.get_variable("Bias", [output_size], dtype=dtype,
                                         initializer=tf.constant_initializer(bias_start, dtype=dtype))
     return res + bias_term
+
+
+def mse_cost(tars, preds, weights):
+    loss = tf.losses.mean_squared_error(
+        tars,
+        preds,
+        weights=weights,
+        scope="MSE"
+    )
+    return tf.reduce_sum(loss)
+
+
+def mse_cost_std_normalized(tars, preds, weights):
+
+
+    indices = tf.where(tf.equal(weights, tf.ones_like(weights)))
+    rel_tars = tf.gather_nd(tars, indices)
+    _, var_tars = tf.nn.moments(rel_tars, axes=[0])
+    rel_pred = tf.gather_nd(preds, indices)
+    _, var_pred = tf.nn.moments(rel_pred, axes=[0])
+    weights = weights / (tf.sqrt(var_tars * var_pred))
+
+    loss = tf.losses.mean_squared_error(
+        tars,
+        preds,
+        weights=weights,
+        scope="MSE"
+    )
+    return tf.reduce_sum(loss)
+
+
+def minus_corr_cost(tars, preds, weights):
+    indices = tf.where(tf.equal(weights, tf.ones_like(weights)))
+    rel_tars = tf.gather_nd(tars, indices)
+    mean_tars, var_tars = tf.nn.moments(rel_tars, axes=[0])
+    rel_pred = tf.gather_nd(preds, indices)
+    mean_preds, var_pred = tf.nn.moments(rel_pred, axes=[0])
+
+    cent_tars = rel_tars - mean_tars
+    cent_pred = rel_pred - mean_preds
+
+    corr = tf.reduce_mean(cent_tars*cent_pred) / (tf.sqrt(var_tars * var_pred))
+    return -corr
