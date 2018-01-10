@@ -16,17 +16,17 @@ def get_command_line_args(Config):
     ap.add_argument("--drop_h", type=float, nargs=1, default=None)
     ap.add_argument("--drop_o", type=float, nargs=1, default=None)
     ap.add_argument("--hidden_size", type=int, nargs=1, default=None)
-    ap.add_argument("--mask", type=float, nargs=1, default=None)
+    ap.add_argument("--mask", type=float, nargs='*', default=None)
     ap.add_argument("--num_steps", type=int, nargs=1, default=None)
     ap.add_argument("--init_scale", type=float, nargs=1, default=None)
-    ap.add_argument("--state_gate", type=bool, nargs=1, default=None)
+    ap.add_argument("--state_gate", type=int, nargs=1, default=None)
     ap.add_argument("--init_bias", type=float, nargs=1, default=None)
     ap.add_argument("--num_layers", type=int, nargs=1, default=None)
     ap.add_argument("--depth", type=int, nargs=1, default=None)
     ap.add_argument("--out_size", type=int, nargs=1, default=None)
     ap.add_argument("--adaptive_optimizer", type=str, nargs=1, default=None)
     ap.add_argument("--loss_func", type=str, nargs=1, default=None)
-    ap.add_argument("--reset_weights_flag", type=bool, nargs=1, default=None)
+    ap.add_argument("--reset_weights_flag", type=int, nargs=1, default=None)
     ap.add_argument("--start_time", type=int, nargs=1, default=None)
     ap.add_argument("--wind_step_size", type=int, nargs=1, default=None)
     ap.add_argument("--switch_to_asgd", type=int, nargs=1, default=None)
@@ -35,9 +35,8 @@ def get_command_line_args(Config):
     ap.add_argument("--lr_decay", type=float, nargs='*', default=None)
     ap.add_argument("--max_max_epoch", type=int, nargs=1, default=None)
     ap.add_argument("--DB_name", type=str, nargs=1, default=None)
-    ap.add_argument("--concat_tar_2_feat", type=bool, nargs=1, default=None)
-    ap.add_argument("--random", type=bool, nargs=1, default=True)
-    ap.add_argument("--server", type=bool, nargs=1, default=False)
+    # ap.add_argument("--random", type=int, nargs=1, default=1)
+    ap.add_argument("--server", type=int, nargs=1, default=0)
     ap.add_argument("--gpu", type=int, nargs='*', default=-1)
     ap.add_argument("--num_of_proc", type=int, nargs=1, default=1)
     ap.add_argument("--tf_seed", type=int, nargs=1, default=None)
@@ -88,8 +87,14 @@ def get_relevant_features_idx(arg):
 
 
 def get_scores_mask(y, config):
-    return np.array(abs(y) > config.mask, dtype=np.float32)
-
+    # mask can be just rectangle if it's float
+    # if its a list of float then the first one is the rectangle mask value and the second one is the probability
+    #       of the others to be unmasked
+    # nan targets (with value 0) will be masked anyway
+    if len(config.mask) == 1:
+        return np.array(abs(y) > config.mask[0], dtype=np.float32)
+    random_mask = np.array(abs(y) > config.mask[0], dtype=np.float32) + np.random.random_sample(y.shape)
+    return np.array(random_mask > 1-config.mask[1], dtype=np.float32) * (y != 0)
 
 
 def get_noise(m, drop_i, drop_h, drop_o):
@@ -193,7 +198,7 @@ def features_nan_to_num(features):
 def get_documentation(config, Config):
     simulation_name = 'rhn_dep=' + str(config.depth) + '__hid_size=' + str(config.hidden_size) + \
                       '__DB=' + config.DB_name + \
-                      '__mask=' + str(config.mask).replace('.','_') + \
+                      '__mask=' + str(config.mask).replace('.','_').replace(' ','').replace('[','').replace(']','') + \
                       '__wind=' + str(config.wind_step_size)
 
     if config.state_gate:
@@ -202,8 +207,8 @@ def get_documentation(config, Config):
     if config.reset_weights_flag:
         simulation_name = simulation_name + '_Rst'
 
-    if Config.random:
-        simulation_name = simulation_name + '_Rnd'
+    # if Config.random:
+    #     simulation_name = simulation_name + '_Rnd'
 
     if Config.server:
         simulation_name = simulation_name + '_Srv'

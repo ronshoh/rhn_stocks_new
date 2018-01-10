@@ -20,20 +20,20 @@ class Config():
 
     # architecture
     weight_decay = 1e-07
-    max_grad_norm = 2000000000
+    max_grad_norm = 0.8
     drop_i = 0.05
     drop_h = 0.3
     drop_o = 0.75
     hidden_size = 200
-    mask = 0.45
+    mask = [0.6] # should be a list
     num_steps = 25
     init_scale = 0.04
     state_gate = True
     init_bias = -2.5
     num_layers = 1
-    depth = 6
+    depth = 5
     out_size = 1
-    loss_func = "mse_cost_std_normalized"
+    loss_func = "mse"
 
     estimation_flag = True
     esimation_epoch = 5
@@ -45,15 +45,14 @@ class Config():
     reset_weights_flag = True
     start_time = 4000
     wind_step_size = 100
-    switch_to_asgd = 40
-    decay_epochs = [10,15,20,25,35,40]
+    switch_to_asgd = 30
+    decay_epochs = [15,23,30]
     learning_rate = 0.001
-    lr_decay = [1.3,1.3,1.3,1.3,1.3,1.3]
-    max_max_epoch = 40
+    lr_decay = [2.0,2.0,0.025]
+    max_max_epoch = 35
 
     # database
     DB_name = 'CCver5_db'
-    concat_tar_2_feat = False
 
     numpy_seed = None
     tf_seed = None
