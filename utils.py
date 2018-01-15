@@ -15,6 +15,11 @@ def get_command_line_args(Config):
     ap.add_argument("--drop_i", type=float, nargs=1, default=None)
     ap.add_argument("--drop_h", type=float, nargs=1, default=None)
     ap.add_argument("--drop_o", type=float, nargs=1, default=None)
+    ap.add_argument("--mc_est", type=int, nargs=1, default=None)
+    ap.add_argument("--mc_drop_i", type=float, nargs=1, default=None)
+    ap.add_argument("--mc_drop_h", type=float, nargs=1, default=None)
+    ap.add_argument("--mc_drop_o", type=float, nargs=1, default=None)
+    ap.add_argument("--mc_steps", type=int, nargs=1, default=None)
     ap.add_argument("--hidden_size", type=int, nargs=1, default=None)
     ap.add_argument("--mask", type=float, nargs='*', default=None)
     ap.add_argument("--num_steps", type=int, nargs=1, default=None)
@@ -212,6 +217,9 @@ def get_documentation(config, Config):
 
     if Config.server:
         simulation_name = simulation_name + '_Srv'
+
+    if Config.mc_est:
+        simulation_name = simulation_name + '_MC'
 
     count = 0
     documentation_dir = os.path.join('./documentation/' + simulation_name)
