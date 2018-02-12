@@ -28,6 +28,7 @@ def get_command_line_args(Config):
     ap.add_argument("--init_bias", type=float, nargs=1, default=None)
     ap.add_argument("--num_layers", type=int, nargs=1, default=None)
     ap.add_argument("--depth", type=int, nargs=1, default=None)
+    ap.add_argument("--depth_out", type=int, nargs=1, default=0)
     ap.add_argument("--out_size", type=int, nargs=1, default=None)
     ap.add_argument("--adaptive_optimizer", type=str, nargs=1, default=None)
     ap.add_argument("--loss_func", type=str, nargs=1, default=None)
@@ -46,6 +47,7 @@ def get_command_line_args(Config):
     ap.add_argument("--num_of_proc", type=int, nargs=1, default=1)
     ap.add_argument("--tf_seed", type=int, nargs=1, default=None)
     ap.add_argument("--numpy_seed", type=int, nargs=1, default=None)
+    ap.add_argument("--n_experts", type=int, nargs=1, default=None)
 
     args = ap.parse_args()
     for arg in vars(args):

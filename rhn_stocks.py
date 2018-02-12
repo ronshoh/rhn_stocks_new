@@ -2,7 +2,6 @@ from __future__ import absolute_import, division, print_function
 import tensorflow as tf
 import numpy as np
 
-from tensorflow.python.ops import variable_scope as vs
 from tensorflow.python.ops import math_ops, array_ops
 from tensorflow.python.util import nest
 from tensorflow.contrib.rnn import RNNCell
@@ -18,8 +17,12 @@ class Model(object):
         self.size = size = config.hidden_size
         self.num_layers = num_layers = config.num_layers
         self.num_of_features = num_of_features = config.num_of_features
+        self.n_experts = n_experts = config.n_experts
 
-        self.in_size = rhn_in_size = config.num_of_features
+        if config.input_mod is None:
+            self.in_size = rhn_in_size = config.num_of_features
+        else:
+            self.in_size = rhn_in_size = config.hidden_size
 
         self.out_size = out_size = config.out_size
 
@@ -31,10 +34,24 @@ class Model(object):
         self._noise_h = tf.placeholder(tf.float32, [batch_size, size, num_layers])
         self._noise_o = tf.placeholder(tf.float32, [batch_size, 1, size])
 
-        inputs = self._input_data
 
-        # W_in_mat = tf.get_variable("W_in_mat", [num_of_features, size])
 
+        if config.input_mod is None:
+            inputs = self._input_data
+            inp_mod = None
+        else:
+            W_in_mat = tf.get_variable("W_in_mat", [num_of_features, size])
+            b_in = tf.get_variable("b_in", [size], initializer=tf.zeros_initializer())
+            inputs = tf.reshape(self._input_data, [-1, num_of_features])
+            inputs = tf.matmul(inputs, W_in_mat) + b_in
+            inputs = tf.reshape(inputs, [batch_size, num_steps, size])
+            inp_mod = bn_relu if config.input_mod == "bn_relu" else \
+                      bn if config.input_mod == "bn" else \
+                      bn_tanh if config.input_mod == "bn_tanh" else \
+                      ln_relu if config.input_mod == "ln_relu" else \
+                      ln if config.input_mod == "ln" else \
+                      linear_tanh if config.input_mod == "linear_tanh" else\
+                      None if config.input_mod == "linear" else -1
 
         outputs = []
         self._initial_state = [0] * self.num_layers
@@ -42,26 +59,51 @@ class Model(object):
         self._final_state = [0] * self.num_layers
         for l in range(config.num_layers):
             with tf.variable_scope('RHN' + str(l)):
-                cell = RHNCell(size, rhn_in_size, is_training, depth=depth, forget_bias=config.init_bias)
+                depth_out = 0 if (l != config.num_layers-1) else config.depth_out
+                cell = RHNCell(size, rhn_in_size, is_training, depth=depth, forget_bias=config.init_bias, depth_out=depth_out)
                 self._initial_state[l] = cell.zero_state(batch_size, tf.float32)
                 state[l] = [self._initial_state[l], self._noise_i[:, :, l], self._noise_h[:, :, l]]
                 for time_step in range(num_steps):
                     if time_step > 0:
                         tf.get_variable_scope().reuse_variables()
-                    (cell_output, state[l]) = cell(inputs[:, time_step, :], state[l], config.state_gate)
+                    (cell_output, state[l]) = cell(inputs[:, time_step, :], state[l], st_gate=config.state_gate,
+                                                   inp_mod=inp_mod)
                     outputs.append(cell_output)
                 inputs = tf.stack(outputs, axis=1)
                 outputs = []
 
         output = tf.reshape(inputs * self._noise_o, [-1, size])
 
-        w_out_mat =  tf.get_variable("w_out_mat", [size, out_size])
-        b_out_mat = tf.get_variable("b_out_mat", [out_size], initializer=tf.zeros_initializer())
+        if n_experts == 1:
+            w_out_mat =  tf.get_variable("w_out_mat", [size, out_size])
+            b_out_mat = tf.get_variable("b_out_mat", [out_size], initializer=tf.zeros_initializer())
 
-        scores = tf.matmul(output, w_out_mat) + b_out_mat
+            scores = tf.matmul(output, w_out_mat) + b_out_mat
+
+
+        elif n_experts > 1:
+            if out_size != 1:
+                print("multiple experts works only for out size of 1 currently.. exiting")
+                exit()
+
+            w_out_mat =  tf.get_variable("w_out_mat", [size, n_experts])
+            b_out_mat = tf.get_variable("b_out_mat", [n_experts], initializer=tf.zeros_initializer())
+
+            experts_scores = tf.matmul(output, w_out_mat) + b_out_mat
+
+            w_prior =  tf.get_variable("w_prior", [size, n_experts])
+            b_prior = tf.get_variable("b_prior", [n_experts], initializer=tf.zeros_initializer())
+
+            prior_logits = tf.matmul(output, w_prior) + b_prior
+            prior = tf.nn.softmax(prior_logits)
+
+            scores = tf.reduce_sum(experts_scores * prior, axis=1)
+
+        else:
+            print("non valid value for number of expert.. must be greater then 0! exiting")
+            exit()
 
         self._predictions = tf.reshape(scores, [batch_size, num_steps])
-
         weights = self._mask
 
 
@@ -274,12 +316,13 @@ class RHNCell(RNNCell):
   Reference: https://arxiv.org/abs/1607.03474
   """
 
-    def __init__(self, num_units, in_size, is_training, depth=3, forget_bias=None):
+    def __init__(self, num_units, in_size, is_training, depth=3, forget_bias=None, depth_out=0):
         self._num_units = num_units
         self._in_size = in_size
         self.is_training = is_training
         self.depth = depth
         self.forget_bias = forget_bias
+        self.depth_out = depth_out
 
     @property
     def input_size(self):
@@ -293,10 +336,13 @@ class RHNCell(RNNCell):
     def state_size(self):
         return self._num_units
 
-    def __call__(self, inputs, state, st_gate=False, scope=None):
+    def __call__(self, inputs, state, inp_mod=None, st_gate=False, scope=None):
         former_state = current_state = state[0]
         noise_i = state[1]
         noise_h = state[2]
+        if inp_mod is not None:
+            with tf.variable_scope('inp_mod'):
+                inputs = inp_mod(inputs)
         for i in range(self.depth):
             with tf.variable_scope('h_' + str(i)):
                 if i == 0:
@@ -315,10 +361,20 @@ class RHNCell(RNNCell):
             print('# using state gating #')
             with tf.variable_scope('state_gate'):
                 g = tf.sigmoid(linear(
-                    [former_state * noise_h, current_state * noise_h], self._num_units, True, self.forget_bias * 1))
+                    [former_state * noise_h, current_state * noise_h], self._num_units, True, self.forget_bias))
                 current_state = g * former_state + (1 - g) * current_state
 
-        return current_state, [current_state, noise_i, noise_h]
+        output = current_state
+        if self.depth_out > 0:
+            with tf.variable_scope('HN_OUT'):
+                for i in range(self.depth_out):
+                    with tf.variable_scope('hout_' + str(i)):
+                        h = tf.tanh(linear([output * noise_h], self._num_units, True))
+                    with tf.variable_scope('tout_' + str(i)):
+                        t = tf.sigmoid(linear([output * noise_h], self._num_units, True, self.forget_bias))
+                        output = (h - output) * t + output
+
+        return output, [current_state, noise_i, noise_h]
 
 
 def linear(args, output_size, bias, bias_start=None, scope=None):
@@ -361,8 +417,8 @@ def linear(args, output_size, bias, bias_start=None, scope=None):
     dtype = [a.dtype for a in args][0]
 
     # Now the computation.
-    with vs.variable_scope(scope or "Linear"):
-        matrix = vs.get_variable(
+    with tf.variable_scope(scope or "Linear"):
+        matrix = tf.get_variable(
             "Matrix", [total_arg_size, output_size], dtype=dtype)
         if len(args) == 1:
             res = math_ops.matmul(args[0], matrix)
@@ -371,9 +427,9 @@ def linear(args, output_size, bias, bias_start=None, scope=None):
         if not bias:
             return res
         elif bias_start is None:
-            bias_term = vs.get_variable("Bias", [output_size], dtype=dtype)
+            bias_term = tf.get_variable("Bias", [output_size], dtype=dtype)
         else:
-            bias_term = vs.get_variable("Bias", [output_size], dtype=dtype,
+            bias_term = tf.get_variable("Bias", [output_size], dtype=dtype,
                                         initializer=tf.constant_initializer(bias_start, dtype=dtype))
     return res + bias_term
 
@@ -389,8 +445,6 @@ def mse_cost(tars, preds, weights):
 
 
 def mse_cost_std_normalized(tars, preds, weights):
-
-
     indices = tf.where(tf.equal(weights, tf.ones_like(weights)))
     rel_tars = tf.gather_nd(tars, indices)
     _, var_tars = tf.nn.moments(rel_tars, axes=[0])
@@ -419,3 +473,72 @@ def minus_corr_cost(tars, preds, weights):
 
     corr = tf.reduce_mean(cent_tars*cent_pred) / (tf.sqrt(var_tars * var_pred))
     return -corr
+
+def ln(inputs, epsilon=1e-5, scope=''):
+    """ Computer LN given an input tensor. We get in an input of shape
+    [N X D] and with LN we compute the mean and var for each individual
+    training point across all it's hidden dimensions rather than across
+    the training batch as we do in BN. This gives us a mean and var of shape
+    [N X 1].
+    """
+    mean, var = tf.nn.moments(inputs, [1], keep_dims=True)
+    with tf.variable_scope(scope + 'LN'):
+        scale = tf.get_variable('alpha',
+                                shape=[inputs.get_shape()[1]],
+                                initializer=tf.constant_initializer(1))
+        shift = tf.get_variable('beta',
+                                shape=[inputs.get_shape()[1]],
+                                initializer=tf.constant_initializer(0))
+    LN = scale * (inputs - mean) / tf.sqrt(var + epsilon) + shift
+
+    return LN
+
+
+def ln_relu(x):
+    return tf.nn.relu(ln(x))
+
+
+def bn(x, name_scope='bn', training=False, epsilon=1e-4, decay=0.999):
+    '''Assume 2d [batch, values] tensor'''
+
+    with tf.variable_scope(name_scope):
+        size = x.get_shape().as_list()[1]
+
+        scale = tf.get_variable('scale', [size], initializer=tf.constant_initializer(0.1))
+        offset = tf.get_variable('offset', [size], initializer=tf.constant_initializer(0.0))
+
+        batch_mean, batch_var = tf.nn.moments(x, [0])
+
+        return tf.nn.batch_normalization(x, batch_mean, batch_var, offset, scale, epsilon)
+
+
+    # with tf.variable_scope(name_scope):
+    #     size = x.get_shape().as_list()[1]
+    #
+    #     scale = tf.get_variable('scale', [size], initializer=tf.constant_initializer(0.1))
+    #     offset = tf.get_variable('offset', [size])
+    #
+    #     pop_mean = tf.get_variable('pop_mean', [size], initializer=tf.zeros_initializer, trainable=False)
+    #     pop_var = tf.get_variable('pop_var', [size], initializer=tf.ones_initializer, trainable=False)
+    #     batch_mean, batch_var = tf.nn.moments(x, [0])
+    #
+    #     train_mean_op = tf.assign(pop_mean, pop_mean * decay + batch_mean * (1 - decay))
+    #     train_var_op = tf.assign(pop_var, pop_var * decay + batch_var * (1 - decay))
+    #
+    #     def batch_statistics():
+    #         with tf.control_dependencies([train_mean_op, train_var_op]):
+    #             return tf.nn.batch_normalization(x, batch_mean, batch_var, offset, scale, epsilon)
+    #
+    #     def population_statistics():
+    #         return tf.nn.batch_normalization(x, pop_mean, pop_var, offset, scale, epsilon)
+    #
+    #     return tf.cond(tf.cast(training, dtype=tf.bool), batch_statistics, population_statistics)
+
+def bn_relu(x):
+    return tf.nn.relu(bn(x))
+
+def bn_tanh(x):
+    return tf.tanh(bn(x))
+
+def linear_tanh(x):
+    return tf.tanh(x)

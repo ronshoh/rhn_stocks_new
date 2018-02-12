@@ -19,11 +19,13 @@ import stocks_black_box as bb
 class Config():
 
     # architecture
+    input_mod = None # None/"linear"/"ln"/"ln_relu"/"bn"/"bn_relu"/"bn_tanh"/"linear_tanh"
+
     weight_decay = 1e-07
     max_grad_norm = 0.8
     drop_i = 0.05
     drop_h = 0.3
-    drop_o = 0.75
+    drop_o = 0.82
     hidden_size = 200
     mask = [0.6, 0.05] # should be a list
     num_steps = 25
@@ -32,8 +34,10 @@ class Config():
     init_bias = -2.5
     num_layers = 1
     depth = 5
+    depth_out = 0
     out_size = 1
     loss_func = "mse"
+    n_experts = 1
 
     estimation_flag = True
     esimation_epoch = 5
@@ -42,8 +46,8 @@ class Config():
     adaptive_optimizer = "RMSProp"
 
     # monte carlo estimation
-    mc_est = True
-    mc_steps = 200
+    mc_est = False
+    mc_steps = 4
     mc_drop_i = 0.0
     mc_drop_h = 0.2
     mc_drop_o = 0.5
@@ -120,52 +124,43 @@ def run_full_epoch(session, m, feats, tars, eval_op, config, verbose=False, test
     return (costs / (test_wind[1] - test_wind[0])), prediction_tot
 
 
-def run_mc_epoch(session, m, feats, tars, eval_op, config, test_wind):
+def run_mc_epoch(session, m, feats, tars, eval_op, pred, config, test_wind):
     print("start monte carlo evaluation")
     if (m.batch_size != tars.shape[0]) or (m.num_steps != 1) or (
                     config.drop_i + config.drop_h + config.drop_o != 0.0): print("not good properties my friend!")
-    mc_final = np.zeros([tars.shape[0],test_wind[1]-test_wind[0]])
-    mc_std = np.zeros([tars.shape[0],test_wind[1]-test_wind[0]])
+    mc_scores = np.zeros([tars.shape[0],test_wind[1]-test_wind[0], config.mc_steps])
+
     num_steps = m.num_steps
     epoch_size = test_wind[1]
 
     start_time = time.time()
 
-    state = [x.eval() for x in m.initial_state]
-    noise_i, noise_h, noise_o = get_noise(m, config.drop_i, config.drop_h, config.drop_o)
-    for i in range(epoch_size):
+    for j in range(config.mc_steps):
 
-        x = feats[:, i * num_steps:(i + 1) * num_steps,:]
-        y = tars[:, i * num_steps:(i + 1) * num_steps]
+        state = [x.eval() for x in m.initial_state]
+        noise_i, noise_h, noise_o = get_noise(m, config.mc_drop_i, config.mc_drop_h, config.mc_drop_o)
+        for i in range(epoch_size):
 
-        scores_mask = get_scores_mask(y, config)
+            x = feats[:, i * num_steps:(i + 1) * num_steps,:]
+            y = tars[:, i * num_steps:(i + 1) * num_steps]
 
-        if i >= test_wind[0]:
-            mc_preds = np.zeros([tars.shape[0], config.mc_steps])
-            for j in range(config.mc_steps):
-                mc_noise_i, mc_noise_h, mc_noise_o = get_noise(m, config.mc_drop_i, config.mc_drop_h, config.mc_drop_o)
+            scores_mask = get_scores_mask(y, config)
 
+            feed_dict = {m.input_data: x, m.targets: y, m.mask: scores_mask,
+                        m.noise_i: noise_i, m.noise_h: noise_h, m.noise_o: noise_o}
+            feed_dict.update({m.initial_state[i]: state[i] for i in range(m.num_layers)})
 
-                feed_dict = {m.input_data: x, m.targets: y, m.mask: scores_mask,
-                             m.noise_i: mc_noise_i, m.noise_h: mc_noise_h, m.noise_o: mc_noise_o}
-                feed_dict.update({m.initial_state[i]: state[i] for i in range(m.num_layers)})
+            state, predictions, _ = session.run([ m.final_state, m.predictions, eval_op], feed_dict)
+            if i >= test_wind[0]:
+                mc_scores[:, i - test_wind[0]:i - test_wind[0]+1, j] = predictions
 
-                mc_preds[:, j:j+1], _ = session.run([m.predictions,eval_op], feed_dict)
+        print("finished %d epochs after %d secs"%(j+1, time.time() - start_time))
 
-            mc_final[:, i - test_wind[0]] = mc_preds.mean(axis=1)
-            mc_std[:, i - test_wind[0]] = np.std(mc_preds, axis=1)
+    mc_final = mc_scores.mean(axis=2)
+    mc_std = mc_scores.std(axis=2)
+    mc_misspec_sq = ((mc_scores - np.expand_dims(pred,axis=2))**2).mean(axis=2)
 
-            if (i - test_wind[0]) % ((test_wind[1] - test_wind[0])//10) == 0:
-                print("finished %.3f. time passed %.0f" % (((i - test_wind[0]) / (test_wind[1] - test_wind[0]))
-                                                           , time.time() - start_time))
-
-        feed_dict = {m.input_data: x, m.targets: y, m.mask: scores_mask,
-                    m.noise_i: noise_i, m.noise_h: noise_h, m.noise_o: noise_o}
-        feed_dict.update({m.initial_state[i]: state[i] for i in range(m.num_layers)})
-
-        state, _ = session.run([m.final_state, eval_op], feed_dict)
-
-    return mc_final, mc_std
+    return mc_final, mc_std, np.sqrt(mc_misspec_sq)
 
 
 def run_algo():
@@ -194,11 +189,13 @@ def run_algo():
     np.random.seed(config.numpy_seed)
     tf.set_random_seed(config.tf_seed)
 
-    test_feat =  features          #[:,config.train_time:,:]
-    test_tar =  targets[:,:,2]    #[:,config.train_time:,2]
+    test_feat = features          #[:,config.train_time:,:]
+    test_tar = targets[:,:,2]    #[:,config.train_time:,2]
     prediction_tot = np.zeros_like(targets[:, :, 2])
-    prediction_tot_mc = np.zeros_like(targets[:, :, 2])
-    std_tot_mc = np.zeros_like(targets[:, :, 2])
+    if config.mc_est:
+        prediction_tot_mc = np.zeros_like(targets[:, :, 2])
+        std_tot_mc = np.zeros_like(targets[:, :, 2])
+        misspecification_tot_mc = np.zeros_like(targets[:, :, 2])
     sess_config = get_sess_config(config)
 
     with  tf.Graph().as_default(), tf.Session(config=sess_config) as session:
@@ -214,6 +211,7 @@ def run_algo():
 
         train_windows = train_windows_producer(config, targets.shape[1])
         for train_time_st, train_time_end in train_windows:
+            train_time_end = train_time_end
             test_window = [train_time_end, min(targets.shape[1],train_time_end + config.wind_step_size)]
             print('Currently testing on times %d:%d. Train times are %d:%d'%
                   (test_window[0] ,test_window[1], train_time_st, train_time_end))
@@ -338,11 +336,11 @@ def run_algo():
             if config.mc_est:
                 st_time = time.time()
                 print("starting MC estimation")
-                mc_final, mc_std = run_mc_epoch(session, mtest, test_feat, test_tar, tf.no_op(),
-                                                config=test_config, test_wind=test_window)
+                mc_final, mc_std, mc_misspecification = \
+                    run_mc_epoch(session, mtest, test_feat, test_tar, tf.no_op(), predictions[:, test_window[0]:test_window[1]], config=test_config, test_wind=test_window)
                 prediction_tot_mc[:, test_window[0]:test_window[1]] = deepcopy(mc_final)
                 std_tot_mc[:, test_window[0]:test_window[1]] = deepcopy(mc_std)
-
+                misspecification_tot_mc[:, test_window[0]:test_window[1]] = deepcopy(mc_misspecification)
 
                 accuracy_window_1, _, _, corr_window_1, _, _, _, _, _, _ = bb.black_box(
                     prediction_tot_mc, targets, train_time_end, window1=test_window)
@@ -367,7 +365,8 @@ def run_algo():
     print('')
     print("finished training")
     prediction_tot[:, :config.start_time] = deepcopy(predictions[:, :config.start_time])
-    prediction_tot_mc[:, :config.start_time] = deepcopy(predictions[:, :config.start_time])
+    if config.mc_est:
+        prediction_tot_mc[:, :config.start_time] = deepcopy(predictions[:, :config.start_time])
 
     accuracy_window_1, accuracy_window_2, total_accuracy, corr_window_1, corr_window_2, corr_total, \
     train_rms_loss, test_rms_loss, wind1_rms_loss, wind2_rms_loss = bb.black_box(prediction_tot, targets,
@@ -400,38 +399,37 @@ def run_algo():
     text_file.write(line)
     text_file.close()
 
+    if config.mc_est:
+        accuracy_window_1, accuracy_window_2, total_accuracy, corr_window_1, corr_window_2, corr_total, \
+        train_rms_loss, test_rms_loss, wind1_rms_loss, wind2_rms_loss = bb.black_box(prediction_tot_mc, targets,
+                                                                                     config.start_time)
 
+        print("MC train_rms_loss = %.4f" % (train_rms_loss))
+        print("MC test_rms_loss = %.4f" % (test_rms_loss))
+        print("MC wind1_rms_loss = %.4f" % (wind1_rms_loss))
+        print("MC wind2_rms_loss = %.4f" % (wind2_rms_loss))
+        print("MC accuracy_window_1 = %.4f" % (accuracy_window_1))
+        print("MC accuracy_window_2 = %.4f" % (accuracy_window_2))
+        print("MC total_accuracy = %.4f" % (total_accuracy))
+        print("MC corr_window_1 = %.4f" % (corr_window_1))
+        print("MC corr_window_2 = %.4f" % (corr_window_2))
+        print("MC corr_total = %.4f" % (corr_total))
 
-    accuracy_window_1, accuracy_window_2, total_accuracy, corr_window_1, corr_window_2, corr_total, \
-    train_rms_loss, test_rms_loss, wind1_rms_loss, wind2_rms_loss = bb.black_box(prediction_tot_mc, targets,
-                                                                                 config.start_time)
-
-    print("MC train_rms_loss = %.4f" % (train_rms_loss))
-    print("MC test_rms_loss = %.4f" % (test_rms_loss))
-    print("MC wind1_rms_loss = %.4f" % (wind1_rms_loss))
-    print("MC wind2_rms_loss = %.4f" % (wind2_rms_loss))
-    print("MC accuracy_window_1 = %.4f" % (accuracy_window_1))
-    print("MC accuracy_window_2 = %.4f" % (accuracy_window_2))
-    print("MC total_accuracy = %.4f" % (total_accuracy))
-    print("MC corr_window_1 = %.4f" % (corr_window_1))
-    print("MC corr_window_2 = %.4f" % (corr_window_2))
-    print("MC corr_total = %.4f" % (corr_total))
-
-    # documentation of final scores
-    text_file = open(documentation_dir + "/MC_final_scores.txt", "w")
-    line = "accuracy_window_1 = %.4f\n" % (accuracy_window_1)
-    text_file.write(line)
-    line = "accuracy_window_2 = %.4f\n" % (accuracy_window_2)
-    text_file.write(line)
-    line = "total_accuracy = %.4f\n" % (total_accuracy)
-    text_file.write(line)
-    line = "corr_window_1 = %.4f\n" % (corr_window_1)
-    text_file.write(line)
-    line = "corr_window_2 = %.4f\n" % (corr_window_2)
-    text_file.write(line)
-    line = "corr_total = %.4f\n" % (corr_total)
-    text_file.write(line)
-    text_file.close()
+        # documentation of final scores
+        text_file = open(documentation_dir + "/MC_final_scores.txt", "w")
+        line = "accuracy_window_1 = %.4f\n" % (accuracy_window_1)
+        text_file.write(line)
+        line = "accuracy_window_2 = %.4f\n" % (accuracy_window_2)
+        text_file.write(line)
+        line = "total_accuracy = %.4f\n" % (total_accuracy)
+        text_file.write(line)
+        line = "corr_window_1 = %.4f\n" % (corr_window_1)
+        text_file.write(line)
+        line = "corr_window_2 = %.4f\n" % (corr_window_2)
+        text_file.write(line)
+        line = "corr_total = %.4f\n" % (corr_total)
+        text_file.write(line)
+        text_file.close()
 
 
     data = {'allScores': prediction_tot.tolist()}
@@ -441,39 +439,52 @@ def run_algo():
     print("saving total predictions to ",save_path)
     m4p.savemat(save_path, data)
 
-    data = {'allScores': prediction_tot_mc.tolist()}
-    pred_name = '/mc_final_predictions' + matrix_epilog
+    if config.mc_est:
+        data = {'allScores': prediction_tot_mc.tolist()}
+        pred_name = '/mc_final_predictions' + matrix_epilog
 
-    save_path = documentation_dir + pred_name + '.mat'
-    print("saving MC total predictions to ",save_path)
-    m4p.savemat(save_path, data)
+        save_path = documentation_dir + pred_name + '.mat'
+        print("saving MC total predictions to ",save_path)
+        m4p.savemat(save_path, data)
 
-    data = {'STDs': std_tot_mc.tolist()}
-    pred_name = '/mc_final_STDs' + matrix_epilog
+        data = {'STDs': std_tot_mc.tolist()}
+        pred_name = '/mc_final_STDs' + matrix_epilog
 
-    save_path = documentation_dir + pred_name + '.mat'
-    print("saving MC total STDs to ",save_path)
-    m4p.savemat(save_path, data)
+        save_path = documentation_dir + pred_name + '.mat'
+        print("saving MC total STDs to ",save_path)
+        m4p.savemat(save_path, data)
+
+        data = {'misspec': misspecification_tot_mc.tolist()}
+        pred_name = '/mc_final_misspecification' + matrix_epilog
+
+        save_path = documentation_dir + pred_name + '.mat'
+        print("saving MC total misspecification to ",save_path)
+        m4p.savemat(save_path, data)
 
 
 ##### pre-main #####
 config = Config()
 
 print("loading DB")
-f = h5py.File(config.DB_name + '.mat')
-
-data = {}
-
-for k, v in f.items():
-    data[k] = np.array(v)
-
-targets = np.transpose(data["targets"], [2, 0, 1])
-
-features = np.transpose(data["features"], [2, 0, 1])
-
-del data
-del v
-del k
+# f = h5py.File(config.DB_name + '.mat')
+#
+# data = {}
+#
+# for k, v in f.items():
+#     data[k] = np.array(v)
+#
+# targets = np.transpose(data["targets"], [2, 0, 1])
+#
+# features = np.transpose(data["features"], [2, 0, 1])
+#
+# del data
+# del v
+# del k
+# del f
+f = np.load(config.DB_name + '.npz')
+targets = f['targets']
+features = f['features']
+print(targets.shape, features.shape)
 del f
 
 print("converting nan to num")
@@ -490,7 +501,7 @@ def main():
         run_algo()
     else:
         processes = [Process(target=run_algo) for _ in range(num_of_process)]
-        print('start running %d processes. Not working on linux' % (num_of_process))
+        print('start running %d processes. Works only on linux' % (num_of_process))
         for p in processes:
             p.start()
         print('all processes are running')
