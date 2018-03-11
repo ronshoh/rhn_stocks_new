@@ -25,9 +25,9 @@ class Config():
     max_grad_norm = 0.8
     drop_i = 0.05
     drop_h = 0.3
-    drop_o = 0.82
+    drop_o = 0.75
     hidden_size = 200
-    mask = [0.6, 0.05] # should be a list
+    mask = [0.6, 0.95, 0.05] # should be a list
     num_steps = 25
     init_scale = 0.04
     state_gate = True
@@ -37,10 +37,12 @@ class Config():
     depth_out = 0
     out_size = 1
     loss_func = "mse"
-    n_experts = 1
+    n_experts = 5
+    h_last = 100
+    drop_l = 0.5
 
     estimation_flag = True
-    esimation_epoch = 5
+    estimation_epoch = 5
 
     # which optimmizer to use - "RMSProp" "Adam"
     adaptive_optimizer = "RMSProp"
@@ -51,11 +53,12 @@ class Config():
     mc_drop_i = 0.0
     mc_drop_h = 0.2
     mc_drop_o = 0.5
+    mc_drop_l = 0.5
 
     # windows
     reset_weights_flag = True
     start_time = 4000
-    wind_step_size = 100
+    wind_step_size = 800
     switch_to_asgd = 30
     decay_epochs = [15,23,30]
     learning_rate = 0.001
@@ -83,7 +86,7 @@ def run_full_epoch(session, m, feats, tars, eval_op, config, verbose=False, test
     max_grad = 0.0
     costs = 0.0
     state = [x.eval() for x in m.initial_state]
-    noise_i, noise_h, noise_o = get_noise(m, config.drop_i, config.drop_h, config.drop_o)
+    noise_i, noise_h, noise_o, noise_l = get_noise(m, config.drop_i, config.drop_h, config.drop_o, config.drop_l)
     for i in range(epoch_size):
         if i==0 and verbose:
             lr = session.run(m.lr)
@@ -97,6 +100,9 @@ def run_full_epoch(session, m, feats, tars, eval_op, config, verbose=False, test
 
         feed_dict = {m.input_data: x, m.targets: y, m.mask: scores_mask,
                     m.noise_i: noise_i, m.noise_h: noise_h, m.noise_o: noise_o}
+        if noise_l is not None:
+            feed_dict.update({m.noise_l: noise_l})
+
         feed_dict.update({m.initial_state[i]: state[i] for i in range(m.num_layers)})
 
         if not asgd_flag:
@@ -138,7 +144,7 @@ def run_mc_epoch(session, m, feats, tars, eval_op, pred, config, test_wind):
     for j in range(config.mc_steps):
 
         state = [x.eval() for x in m.initial_state]
-        noise_i, noise_h, noise_o = get_noise(m, config.mc_drop_i, config.mc_drop_h, config.mc_drop_o)
+        noise_i, noise_h, noise_o, noise_l = get_noise(m, config.mc_drop_i, config.mc_drop_h, config.mc_drop_o, config.mc_drop_l)
         for i in range(epoch_size):
 
             x = feats[:, i * num_steps:(i + 1) * num_steps,:]
@@ -148,6 +154,9 @@ def run_mc_epoch(session, m, feats, tars, eval_op, pred, config, test_wind):
 
             feed_dict = {m.input_data: x, m.targets: y, m.mask: scores_mask,
                         m.noise_i: noise_i, m.noise_h: noise_h, m.noise_o: noise_o}
+            if noise_l is not None:
+                feed_dict.update({m.noise_l: noise_l})
+
             feed_dict.update({m.initial_state[i]: state[i] for i in range(m.num_layers)})
 
             state, predictions, _ = session.run([ m.final_state, m.predictions, eval_op], feed_dict)
@@ -228,34 +237,41 @@ def run_algo():
                 mtrain.reset_asgd(session)
             lr_decay = 1.0
             best_acc = 0.0
+            best_acc_top_10 = 0.0
             best_corr = 0.0
             best_cost = 100.0
             asgd_flag = False
             for i in range(config.max_max_epoch):
                 st_time = time.time()
 
-                if (i % config.esimation_epoch) == 0 and config.estimation_flag:
+                if (i % config.estimation_epoch) == 0 and config.estimation_flag:
                     st_time = time.time()
                     if asgd_flag:
                         mtrain.store_set_asgd_weights(session)
                     costs, predictions = run_full_epoch(session, mtest, test_feat, test_tar, tf.no_op(),
                                                         config=test_config, test_wind=test_window)
 
-                    accuracy_window_1, _, _, corr_window_1, _, _, _, _, _, _ = \
+                    accuracy_window_1, _, _, corr_window_1, _, _, _, _, _, _, _, top_10_acc_wind_1, _ = \
                         bb.black_box(predictions,targets, train_time_end,window1=test_window)
 
                     print('')
                     print("accuracy_window_%d:%d = %.10f"%(test_window[0] ,test_window[1], accuracy_window_1))
+                    print("top_10_acc_wind_%d:%d = %.10f"%(test_window[0] ,test_window[1], top_10_acc_wind_1))
                     print("corr_window_%d:%d = %.10f"%(test_window[0] ,test_window[1], corr_window_1))
                     print("test_cost_window_%d:%d = %.10f"%(test_window[0] ,test_window[1], costs))
 
                     best_acc = accuracy_window_1 if (accuracy_window_1>best_acc) else best_acc
+                    best_acc_top_10 = top_10_acc_wind_1 if (top_10_acc_wind_1>best_acc_top_10) else best_acc_top_10
                     best_corr = corr_window_1 if (corr_window_1 > best_corr) else best_corr
                     best_cost = costs if (costs < best_cost) else best_cost
 
-                    print("window %d:%d - best accuracy = %.10f, best corr = %.10f, best cost = %.10f"%
-                          (test_window[0] ,test_window[1], best_acc, best_corr, best_cost))
+                    print("window %d:%d - best accuracy = %.10f, best_acc_top_10 = %.10f, best corr = %.10f, best cost = %.10f"%
+                          (test_window[0] ,test_window[1], best_acc, best_acc_top_10, best_corr, best_cost))
                     print('')
+
+                    tag_name = "top_10_acc_window_%d:%d"%(test_window[0] ,test_window[1])
+                    sum = tf.Summary(value=[tf.Summary.Value(tag=tag_name, simple_value=top_10_acc_wind_1)])
+                    train_writer.add_summary(sum, i + 1)
 
                     tag_name = "accuracy_window_%d:%d"%(test_window[0] ,test_window[1])
                     sum = tf.Summary(value=[tf.Summary.Value(tag=tag_name, simple_value=accuracy_window_1)])
@@ -305,12 +321,17 @@ def run_algo():
             costs, predictions = run_full_epoch(session, mtest, test_feat, test_tar, tf.no_op(), config=test_config,
                                                 test_wind=test_window)
 
-            accuracy_window_1, _, _, corr_window_1, _, _, _, _, _, _ = bb.black_box(
+            accuracy_window_1, _, _, corr_window_1, _, _, _, _, _, _, _, top_10_acc_wind_1, _ = bb.black_box(
                 predictions, targets, train_time_end, window1=test_window)
 
             print("final accuracy_window_%d:%d = %.10f" % (test_window[0], test_window[1], accuracy_window_1))
+            print("final top_10_acc_window_%d:%d = %.10f" % (test_window[0], test_window[1], top_10_acc_wind_1))
             print("final corr_window_%d:%d = %.10f" % (test_window[0], test_window[1], corr_window_1))
             print('')
+
+            tag_name = "top_10_acc_window_%d:%d" % (test_window[0], test_window[1])
+            sum = tf.Summary(value=[tf.Summary.Value(tag=tag_name, simple_value=top_10_acc_wind_1)])
+            train_writer.add_summary(sum, i + 1)
 
             tag_name = "accuracy_window_%d:%d" % (test_window[0], test_window[1])
             sum = tf.Summary(value=[tf.Summary.Value(tag=tag_name, simple_value=accuracy_window_1)])
@@ -319,6 +340,10 @@ def run_algo():
             tag_name = "corr_window_%d:%d" % (test_window[0], test_window[1])
             sum = tf.Summary(value=[tf.Summary.Value(tag=tag_name, simple_value=corr_window_1)])
             train_writer.add_summary(sum, i + 1)
+
+            tag_name = "top_10_acc_over_time"
+            sum = tf.Summary(value=[tf.Summary.Value(tag=tag_name, simple_value=top_10_acc_wind_1)])
+            train_writer.add_summary(sum, test_window[1])
 
             tag_name = "accuracy_over_time"
             sum = tf.Summary(value=[tf.Summary.Value(tag=tag_name, simple_value=accuracy_window_1)])
@@ -342,15 +367,20 @@ def run_algo():
                 std_tot_mc[:, test_window[0]:test_window[1]] = deepcopy(mc_std)
                 misspecification_tot_mc[:, test_window[0]:test_window[1]] = deepcopy(mc_misspecification)
 
-                accuracy_window_1, _, _, corr_window_1, _, _, _, _, _, _ = bb.black_box(
+                accuracy_window_1, _, _, corr_window_1, _, _, _, _, _, _, _, top_10_acc_wind_1, _ = bb.black_box(
                     prediction_tot_mc, targets, train_time_end, window1=test_window)
 
                 print("MC accuracy_window_%d:%d = %.10f" % (test_window[0], test_window[1], accuracy_window_1))
+                print("MC top_10_acc_window_%d:%d = %.10f" % (test_window[0], test_window[1], top_10_acc_wind_1))
                 print("MC corr_window_%d:%d = %.10f" % (test_window[0], test_window[1], corr_window_1))
                 print('')
 
                 tag_name = "MC_accuracy_over_time"
                 sum = tf.Summary(value=[tf.Summary.Value(tag=tag_name, simple_value=accuracy_window_1)])
+                train_writer.add_summary(sum, test_window[1])
+
+                tag_name = "MC_top_10_acc_over_time"
+                sum = tf.Summary(value=[tf.Summary.Value(tag=tag_name, simple_value=top_10_acc_wind_1)])
                 train_writer.add_summary(sum, test_window[1])
 
                 tag_name = "MC_corr_window_over_time"
@@ -369,8 +399,8 @@ def run_algo():
         prediction_tot_mc[:, :config.start_time] = deepcopy(predictions[:, :config.start_time])
 
     accuracy_window_1, accuracy_window_2, total_accuracy, corr_window_1, corr_window_2, corr_total, \
-    train_rms_loss, test_rms_loss, wind1_rms_loss, wind2_rms_loss = bb.black_box(prediction_tot, targets,
-                                                                                 config.start_time)
+    train_rms_loss, test_rms_loss, wind1_rms_loss, wind2_rms_loss, top_10_acc_tot, top_10_acc_wind_1, top_10_acc_wind_2\
+        = bb.black_box(prediction_tot, targets, config.start_time)
 
     print("train_rms_loss = %.4f" % (train_rms_loss))
     print("test_rms_loss = %.4f" % (test_rms_loss))
@@ -379,6 +409,9 @@ def run_algo():
     print("accuracy_window_1 = %.4f" % (accuracy_window_1))
     print("accuracy_window_2 = %.4f" % (accuracy_window_2))
     print("total_accuracy = %.4f" % (total_accuracy))
+    print("top_10_acc_wind_1 = %.4f" % (top_10_acc_wind_1))
+    print("top_10_acc_wind_2 = %.4f" % (top_10_acc_wind_2))
+    print("top_10_acc_tot = %.4f" % (top_10_acc_tot))
     print("corr_window_1 = %.4f" % (corr_window_1))
     print("corr_window_2 = %.4f" % (corr_window_2))
     print("corr_total = %.4f" % (corr_total))
@@ -397,12 +430,24 @@ def run_algo():
     text_file.write(line)
     line = "corr_total = %.4f\n" % (corr_total)
     text_file.write(line)
+    line = "wind1_rms_loss = %.4f\n" % (wind1_rms_loss)
+    text_file.write(line)
+    line = "wind2_rms_loss = %.4f\n" % (wind2_rms_loss)
+    text_file.write(line)
+    line = "test_rms_loss = %.4f\n" % (test_rms_loss)
+    text_file.write(line)
+    line = "top_10_acc_wind_1 = %.4f\n" % (top_10_acc_wind_1)
+    text_file.write(line)
+    line = "top_10_acc_wind_2 = %.4f\n" % (top_10_acc_wind_2)
+    text_file.write(line)
+    line = "top_10_acc_tot = %.4f\n" % (top_10_acc_tot)
+    text_file.write(line)
     text_file.close()
 
     if config.mc_est:
         accuracy_window_1, accuracy_window_2, total_accuracy, corr_window_1, corr_window_2, corr_total, \
-        train_rms_loss, test_rms_loss, wind1_rms_loss, wind2_rms_loss = bb.black_box(prediction_tot_mc, targets,
-                                                                                     config.start_time)
+        train_rms_loss, test_rms_loss, wind1_rms_loss, wind2_rms_loss, top_10_acc_tot, top_10_acc_wind_1,\
+        top_10_acc_wind_2 = bb.black_box(prediction_tot_mc, targets, config.start_time)
 
         print("MC train_rms_loss = %.4f" % (train_rms_loss))
         print("MC test_rms_loss = %.4f" % (test_rms_loss))
@@ -411,6 +456,9 @@ def run_algo():
         print("MC accuracy_window_1 = %.4f" % (accuracy_window_1))
         print("MC accuracy_window_2 = %.4f" % (accuracy_window_2))
         print("MC total_accuracy = %.4f" % (total_accuracy))
+        print("MC top_10_acc_wind_1 = %.4f" % (top_10_acc_wind_1))
+        print("MC top_10_acc_wind_2 = %.4f" % (top_10_acc_wind_2))
+        print("MC top_10_acc_tot = %.4f" % (top_10_acc_tot))
         print("MC corr_window_1 = %.4f" % (corr_window_1))
         print("MC corr_window_2 = %.4f" % (corr_window_2))
         print("MC corr_total = %.4f" % (corr_total))
@@ -428,6 +476,18 @@ def run_algo():
         line = "corr_window_2 = %.4f\n" % (corr_window_2)
         text_file.write(line)
         line = "corr_total = %.4f\n" % (corr_total)
+        text_file.write(line)
+        line = "wind1_rms_loss = %.4f\n" % (wind1_rms_loss)
+        text_file.write(line)
+        line = "wind2_rms_loss = %.4f\n" % (wind2_rms_loss)
+        text_file.write(line)
+        line = "test_rms_loss = %.4f\n" % (test_rms_loss)
+        text_file.write(line)
+        line = "top_10_acc_wind_1 = %.4f\n" % (top_10_acc_wind_1)
+        text_file.write(line)
+        line = "top_10_acc_wind_2 = %.4f\n" % (top_10_acc_wind_2)
+        text_file.write(line)
+        line = "top_10_acc_tot = %.4f\n" % (top_10_acc_tot)
         text_file.write(line)
         text_file.close()
 
@@ -466,26 +526,27 @@ def run_algo():
 config = Config()
 
 print("loading DB")
-# f = h5py.File(config.DB_name + '.mat')
-#
-# data = {}
-#
-# for k, v in f.items():
-#     data[k] = np.array(v)
-#
-# targets = np.transpose(data["targets"], [2, 0, 1])
-#
-# features = np.transpose(data["features"], [2, 0, 1])
-#
-# del data
-# del v
-# del k
-# del f
-f = np.load(config.DB_name + '.npz')
-targets = f['targets']
-features = f['features']
-print(targets.shape, features.shape)
+f = h5py.File(config.DB_name + '.mat')
+
+data = {}
+
+for k, v in f.items():
+    data[k] = np.array(v)
+
+targets = np.transpose(data["targets"], [2, 0, 1])
+
+features = np.transpose(data["features"], [2, 0, 1])
+
+del data
+del v
+del k
 del f
+# f = np.load(config.DB_name + '.npz')
+# targets = f['targets']
+# features = f['features']
+# del f
+
+print(targets.shape, features.shape)
 
 print("converting nan to num")
 features = features_nan_to_num(features)

@@ -18,6 +18,7 @@ class Model(object):
         self.num_layers = num_layers = config.num_layers
         self.num_of_features = num_of_features = config.num_of_features
         self.n_experts = n_experts = config.n_experts
+        self.h_last = h_last = config.h_last
 
         if config.input_mod is None:
             self.in_size = rhn_in_size = config.num_of_features
@@ -80,8 +81,7 @@ class Model(object):
 
             scores = tf.matmul(output, w_out_mat) + b_out_mat
 
-
-        elif n_experts > 1:
+        elif n_experts > 1 and h_last == 1:
             if out_size != 1:
                 print("multiple experts works only for out size of 1 currently.. exiting")
                 exit()
@@ -99,13 +99,42 @@ class Model(object):
 
             scores = tf.reduce_sum(experts_scores * prior, axis=1)
 
+        elif n_experts > 1 and h_last > 1:
+            self._noise_l = tf.placeholder(tf.float32, [batch_size, 1, n_experts*h_last])
+            w_latent =  tf.get_variable("w_latent", [size, n_experts*h_last])
+            b_latent = tf.get_variable("b_latent", [n_experts*h_last], initializer=tf.zeros_initializer())
+
+            latent = tf.tanh(tf.matmul(output, w_latent) + b_latent)
+
+            latent = tf.reshape(latent, [batch_size, num_steps, n_experts*h_last])
+
+            latent = tf.reshape(latent * self._noise_l, [-1, h_last])
+
+            w_out_mat = tf.get_variable("w_out_mat", [h_last, out_size])
+            b_out_mat = tf.get_variable("b_out_mat", [out_size], initializer=tf.zeros_initializer())
+
+            experts_scores = tf.matmul(latent, w_out_mat) + b_out_mat
+
+            experts_scores = tf.reshape(experts_scores, [-1, n_experts, out_size])
+
+            w_prior =  tf.get_variable("w_prior", [size, n_experts])
+            b_prior = tf.get_variable("b_prior", [n_experts], initializer=tf.zeros_initializer())
+
+            prior_logits = tf.matmul(output, w_prior) + b_prior
+            prior = tf.nn.softmax(prior_logits)
+
+            prior = tf.expand_dims(prior, 2)
+
+            scores = tf.reduce_sum(experts_scores * prior, axis=1)
+
         else:
             print("non valid value for number of expert.. must be greater then 0! exiting")
+            scores = []
             exit()
+
 
         self._predictions = tf.reshape(scores, [batch_size, num_steps])
         weights = self._mask
-
 
         if config.loss_func == "mse":
             pred_loss = mse_cost(self._targets, self._predictions, weights)
@@ -189,13 +218,10 @@ class Model(object):
                                                     in enumerate(self._temp_weights)]
 
 
-
-
     def reset_asgd(self, session):
         counter = session.run(self.counter)
         session.run(tf.assign(self.counter, counter * 0))
         session.run(self.reset_accumulation_op)
-
 
     def store_set_asgd_weights(self, session):
         session.run(self.store_weights)
@@ -279,6 +305,10 @@ class Model(object):
     @property
     def noise_o(self):
         return self._noise_o
+
+    @property
+    def noise_l(self):
+        return self._noise_l
 
     @property
     def initial_state(self):
@@ -473,6 +503,7 @@ def minus_corr_cost(tars, preds, weights):
 
     corr = tf.reduce_mean(cent_tars*cent_pred) / (tf.sqrt(var_tars * var_pred))
     return -corr
+
 
 def ln(inputs, epsilon=1e-5, scope=''):
     """ Computer LN given an input tensor. We get in an input of shape

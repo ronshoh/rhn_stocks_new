@@ -10,44 +10,51 @@ import argparse
 def get_command_line_args(Config):
     ap = argparse.ArgumentParser()
 
-    ap.add_argument("--weight_decay", type=float, nargs=1, default=None)
-    ap.add_argument("--max_grad_norm", type=float, nargs=1, default=None)
-    ap.add_argument("--drop_i", type=float, nargs=1, default=None)
-    ap.add_argument("--drop_h", type=float, nargs=1, default=None)
-    ap.add_argument("--drop_o", type=float, nargs=1, default=None)
-    ap.add_argument("--mc_est", type=int, nargs=1, default=None)
-    ap.add_argument("--mc_drop_i", type=float, nargs=1, default=None)
-    ap.add_argument("--mc_drop_h", type=float, nargs=1, default=None)
-    ap.add_argument("--mc_drop_o", type=float, nargs=1, default=None)
-    ap.add_argument("--mc_steps", type=int, nargs=1, default=None)
-    ap.add_argument("--hidden_size", type=int, nargs=1, default=None)
-    ap.add_argument("--mask", type=float, nargs='*', default=None)
-    ap.add_argument("--num_steps", type=int, nargs=1, default=None)
-    ap.add_argument("--init_scale", type=float, nargs=1, default=None)
-    ap.add_argument("--state_gate", type=int, nargs=1, default=None)
-    ap.add_argument("--init_bias", type=float, nargs=1, default=None)
-    ap.add_argument("--num_layers", type=int, nargs=1, default=None)
-    ap.add_argument("--depth", type=int, nargs=1, default=None)
-    ap.add_argument("--depth_out", type=int, nargs=1, default=0)
-    ap.add_argument("--out_size", type=int, nargs=1, default=None)
-    ap.add_argument("--adaptive_optimizer", type=str, nargs=1, default=None)
-    ap.add_argument("--loss_func", type=str, nargs=1, default=None)
-    ap.add_argument("--reset_weights_flag", type=int, nargs=1, default=None)
-    ap.add_argument("--start_time", type=int, nargs=1, default=None)
-    ap.add_argument("--wind_step_size", type=int, nargs=1, default=None)
-    ap.add_argument("--switch_to_asgd", type=int, nargs=1, default=None)
-    ap.add_argument("--decay_epochs", type=int, nargs='*', default=None)
-    ap.add_argument("--learning_rate", type=float, nargs=1, default=None)
-    ap.add_argument("--lr_decay", type=float, nargs='*', default=None)
-    ap.add_argument("--max_max_epoch", type=int, nargs=1, default=None)
-    ap.add_argument("--DB_name", type=str, nargs=1, default=None)
+    ap.add_argument("--weight_decay", type=float, nargs=1, default=None, help='L2 weight normalization')
+    ap.add_argument("--max_grad_norm", type=float, nargs=1, default=None, help='truncation of gradient magnitude')
+    ap.add_argument("--drop_i", type=float, nargs=1, default=None, help='drop rate for input')
+    ap.add_argument("--drop_h", type=float, nargs=1, default=None, help='drop rate for state')
+    ap.add_argument("--drop_o", type=float, nargs=1, default=None, help='drop rate for RHN output')
+    ap.add_argument("--mc_est", type=int, nargs=1, default=None, help='flag to decide if us monte carlo estimation')
+    ap.add_argument("--mc_drop_i", type=float, nargs=1, default=None, help='MC drop rate for input')
+    ap.add_argument("--mc_drop_h", type=float, nargs=1, default=None, help='MC drop rate for state')
+    ap.add_argument("--mc_drop_o", type=float, nargs=1, default=None, help='MC drop rate for RHN output')
+    ap.add_argument("--mc_steps", type=int, nargs=1, default=None, help='number of MC iterations')
+    ap.add_argument("--hidden_size", type=int, nargs=1, default=None, help='state size')
+    ap.add_argument("--mask", type=float, nargs='*', default=None, help='target msking')
+    ap.add_argument("--num_steps", type=int, nargs=1, default=None, help='length of BPTT')
+    ap.add_argument("--init_scale", type=float, nargs=1, default=None, help='scaling for weight initialization')
+    ap.add_argument("--state_gate", type=int, nargs=1, default=None, help='flag to use state gating')
+    ap.add_argument("--init_bias", type=float, nargs=1, default=None, help='bias for gating')
+    ap.add_argument("--num_layers", type=int, nargs=1, default=None, help='number of rhn layers')
+    ap.add_argument("--depth", type=int, nargs=1, default=None, help='depth of each layer')
+    ap.add_argument("--depth_out", type=int, nargs=1, default=0, help='layers after recurrent layers')
+    ap.add_argument("--out_size", type=int, nargs=1, default=None, help='size of output')
+    ap.add_argument("--adaptive_optimizer", type=str, nargs=1, default=None, help='which adaptive optimizer to use')
+    ap.add_argument("--loss_func", type=str, nargs=1, default=None, help='what loss function to use')
+    ap.add_argument("--reset_weights_flag", type=int, nargs=1, default=None,
+                    help='flag to reste weights between each time window')
+    ap.add_argument("--start_time", type=int, nargs=1, default=None, help='time to start testing')
+    ap.add_argument("--wind_step_size", type=int, nargs=1, default=None, help='time between test windows')
+    ap.add_argument("--switch_to_asgd", type=int, nargs=1, default=None, help='what epoch to switch to ASGD')
+    ap.add_argument("--decay_epochs", type=int, nargs='*', default=None,
+                    help='list of what epochs to decay learning rate')
+    ap.add_argument("--learning_rate", type=float, nargs=1, default=None, help='initial learning rate')
+    ap.add_argument("--lr_decay", type=float, nargs='*', default=None, help='list of what decays to use')
+    ap.add_argument("--max_max_epoch", type=int, nargs=1, default=None, help='number of total epochs')
+    ap.add_argument("--DB_name", type=str, nargs=1, default=None, help='database name')
     # ap.add_argument("--random", type=int, nargs=1, default=1)
-    ap.add_argument("--server", type=int, nargs=1, default=0)
-    ap.add_argument("--gpu", type=int, nargs='*', default=-1)
-    ap.add_argument("--num_of_proc", type=int, nargs=1, default=1)
-    ap.add_argument("--tf_seed", type=int, nargs=1, default=None)
-    ap.add_argument("--numpy_seed", type=int, nargs=1, default=None)
-    ap.add_argument("--n_experts", type=int, nargs=1, default=None)
+    ap.add_argument("--server", type=int, nargs=1, default=0, help='flag to say if use linux server')
+    ap.add_argument("--gpu", type=int, nargs='*', default=-1, help='which GPU to use for simulation')
+    ap.add_argument("--num_of_proc", type=int, nargs=1, default=1,
+                    help='how many simulations to run simultaneously')
+    ap.add_argument("--tf_seed", type=int, nargs=1, default=None, help='tensorflow seed')
+    ap.add_argument("--numpy_seed", type=int, nargs=1, default=None, help='numpy seed')
+    ap.add_argument("--n_experts", type=int, nargs=1, default=None,
+                    help='number of regression layers (mixture of regression)')
+    ap.add_argument("--h_last", type=int, nargs=1, default=None, help='In case of using mixture, what size of layer')
+    ap.add_argument("--drop_l", type=float, nargs=1, default=None, help='drop rate for latent')
+    ap.add_argument("--mc_drop_l", type=float, nargs=1, default=None, help='MC drop rate for latent')
 
     args = ap.parse_args()
     for arg in vars(args):
@@ -98,14 +105,22 @@ def get_scores_mask(y, config):
     # if its a list of float then the first one is the rectangle mask value and the second one is the probability
     #       of the others to be unmasked
     # nan targets (with value 0) will be masked anyway
-    if len(config.mask) == 1:
+    if len(config.mask) == 1: # treshold
         return np.array(abs(y) > config.mask[0], dtype=np.float32)
-    random_mask = np.array(abs(y) > config.mask[0], dtype=np.float32) + np.random.random_sample(y.shape)
-    return np.array(random_mask > 1-config.mask[1], dtype=np.float32) * (y != 0)
+    elif len(config.mask) == 2: # threshold + probability for low targets
+        random_mask = np.array(abs(y) > config.mask[0], dtype=np.float32) + np.random.random_sample(y.shape)
+        return np.array(random_mask > 1-config.mask[1], dtype=np.float32) * (y != 0)
+    elif len(config.mask) == 3: # threshold + probability for high targets + probability for low targets
+        thresholds = config.mask[1] * np.array(abs(y) > config.mask[0], dtype=np.float32) + \
+                     config.mask[2] * np.array(abs(y) <= config.mask[0], dtype=np.float32)
+        return np.array(thresholds + np.random.random_sample(thresholds.shape), dtype=np.float32) * (y != 0)
+    else:
+        print("wrong argument for get_scores_mask!! mask=" + str(config.mask))
+        exit()
 
 
-def get_noise(m, drop_i, drop_h, drop_o):
-    keep_i, keep_h, keep_o = 1.0 - drop_i, 1.0 - drop_h, 1.0 - drop_o
+def get_noise(m, drop_i, drop_h, drop_o, drop_l):
+    keep_i, keep_h, keep_o, keep_l = 1.0 - drop_i, 1.0 - drop_h, 1.0 - drop_o, 1 - drop_l
     if keep_i < 1.0:
         noise_i = (np.random.random_sample((m.batch_size, m.in_size, m.num_layers)) < keep_i).astype(np.float32) / keep_i
     else:
@@ -118,7 +133,14 @@ def get_noise(m, drop_i, drop_h, drop_o):
         noise_o = (np.random.random_sample((m.batch_size, 1, m.size)) < keep_o).astype(np.float32) / keep_o
     else:
         noise_o = np.ones((m.batch_size, 1, m.size), dtype=np.float32)
-    return noise_i, noise_h, noise_o
+    if m.n_experts > 1 and m.h_last > 1:
+        if keep_l < 1.0:
+            noise_l = (np.random.random_sample((m.batch_size, 1, m.n_experts*m.h_last)) < keep_l).astype(np.float32) / keep_l
+        else:
+            noise_l = np.ones((m.batch_size, 1, m.n_experts*m.h_last), dtype=np.float32)
+    else:
+        noise_l = None
+    return noise_i, noise_h, noise_o, noise_l
 
 
 def reset_optimizer(session, name):

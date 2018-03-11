@@ -18,6 +18,8 @@ import os
 #   plot_hist_flag - if user want to generate histograms
 #   plot_hist_path - relative path to where user wants histograms to be saved (must end with '\\'
 #######################################################################
+
+
 def black_box(predictions,targets, train_time_end, plot_hist_flag=False ,plot_hist_path='histograms\\',window1=None):
 
     #define windows
@@ -74,6 +76,46 @@ def black_box(predictions,targets, train_time_end, plot_hist_flag=False ,plot_hi
     total_accuracy = (np.sum(acc_vec_1)+np.sum(acc_vec_2))/(len(acc_vec_1)+len(acc_vec_2))
 
 
+    ##### top 10 accuracy #####
+    top_10_acc_wind_1 = np.array([])
+    for t in range(window1[0], window1[1]):
+        pr = predictions[:, t]
+        length = round(predictions.shape[0] * 0.1)
+        idxes_top = pr.argsort()[-length:][::-1]
+        idxes_bot = pr.argsort()[:length]
+        idxes = np.concatenate([idxes_top, idxes_bot])
+        pred_class = np.zeros_like(pr)
+        pred_class[np.greater(pr, 0.0)] = 3
+        pred_class[np.less_equal(pr, 0.0)] = 1
+        pred_class = pred_class[idxes]
+        lab = targets[idxes, t, 0]
+        acc_vec = np.equal(pred_class, lab)
+        valid_indices = np.where(np.logical_not(np.logical_or(np.equal(lab,2),np.isnan(lab))))
+        acc_vec = acc_vec[valid_indices]
+        top_10_acc_wind_1 = np.concatenate([top_10_acc_wind_1, acc_vec])
+
+
+
+    top_10_acc_wind_2 = np.array([])
+    for t in range(window2[0], window2[1]):
+        pr = predictions[:, t]
+        length = round(predictions.shape[0] * 0.1)
+        idxes_top = pr.argsort()[-length:][::-1]
+        idxes_bot = pr.argsort()[:length]
+        idxes = np.concatenate([idxes_top, idxes_bot])
+        pred_class = np.zeros_like(pr)
+        pred_class[np.greater(pr, 0.0)] = 3
+        pred_class[np.less_equal(pr, 0.0)] = 1
+        pred_class = pred_class[idxes]
+        lab = targets[idxes, t, 0]
+        acc_vec = np.equal(pred_class, lab)
+        valid_indices = np.where(np.logical_not(np.logical_or(np.equal(lab,2),np.isnan(lab))))
+        acc_vec = acc_vec[valid_indices]
+        top_10_acc_wind_2 = np.concatenate([top_10_acc_wind_2, acc_vec])
+
+    top_10_acc_tot = (np.sum(top_10_acc_wind_1)+np.sum(top_10_acc_wind_2))/(len(top_10_acc_wind_1)+len(top_10_acc_wind_2))
+    top_10_acc_wind_1 = np.sum(top_10_acc_wind_1) / len(top_10_acc_wind_1)
+    top_10_acc_wind_2 = np.sum(top_10_acc_wind_2) / len(top_10_acc_wind_2)
     ##### correlation check #####
 
     num_of_cases = targets.shape[0]
@@ -130,7 +172,8 @@ def black_box(predictions,targets, train_time_end, plot_hist_flag=False ,plot_hi
     wind2_rms_loss = np.average(relevant_mat[valid_idx])**0.5
 
     return [accuracy_window_1, accuracy_window_2, total_accuracy, corr_window_1, corr_window_2, corr_total,
-            train_rms_loss, test_rms_loss, wind1_rms_loss, wind2_rms_loss]
+            train_rms_loss, test_rms_loss, wind1_rms_loss, wind2_rms_loss, top_10_acc_tot, top_10_acc_wind_1,
+            top_10_acc_wind_2]
 
 
 

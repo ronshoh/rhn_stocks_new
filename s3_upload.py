@@ -6,8 +6,6 @@ import time
 import logging
 logging.basicConfig(format='%(asctime)-15s | %(levelname)-8s | %(message)s')
 
-SCORE_FILENAME = "final_predictions"
-
 
 class S3(object):
     def __init__(self, region=None, aws_access_key_id=None, aws_secret_access_key=None):
@@ -60,11 +58,11 @@ class S3(object):
                 return -1
 
 
-def get_simulation_dir(root):
+def get_simulation_dir(root, name):
     for (folder, subs, files) in os.walk(root):
         for filename in files:
-            scores_file = [f for f in files if f.startswith(SCORE_FILENAME) and f.endswith("txt")]
-            if filename == SCORE_FILENAME + ".mat" and len(scores_file) == 0:
+            scores_file = [f for f in files if f.startswith(name) and f.endswith("txt")]
+            if filename == name + ".mat" and len(scores_file) == 0:
                 sim_name = folder.split("\\")[-1]
                 file_path = os.path.join(folder, filename)
                 yield(sim_name, file_path)
@@ -108,11 +106,13 @@ def main():
     ap.add_argument("--dir", type=str, default=None, help="results' dir")
     ap.add_argument("--s3-path", type=str, default=None, help="S3 Path. (haim folder is excluded)")
     ap.add_argument("--summary", type=str, default=None, help="summary file Path.")
+    ap.add_argument("--score_filename", type=str, default="final_predictions", help="summary file Path.")
     ap.add_argument("--max_files", type=int, default=None, help="max files to upload in a single run")
     ap.add_argument("--wait_time", type=int, default=600, help="max files to upload in a single run")
 
     args = ap.parse_args()
 
+    print("score_filename="+args.score_filename)
     s3 = S3('us-east-1', 'AKIAIYY3BXHCOP6ZVPNA', 'SLcm0GNVY9b/NXSgOA+1BJplDKAEaadp/epS74j3')
 
 
@@ -122,7 +122,7 @@ def main():
 
     sim_list = []
     s3.log.info("uploading files...\n\n")
-    for i, (sim_name, file_path) in enumerate(get_simulation_dir(args.dir)):
+    for i, (sim_name, file_path) in enumerate(get_simulation_dir(args.dir, args.score_filename)):
         sim_list.append((i, sim_name, file_path))
         s3_path = args.s3_path + '{:04d}'.format(i) + "/"
         s3.put_file('btx-job-request',
@@ -132,6 +132,8 @@ def main():
             if i == args.max_files - 1:
                 break
 
+    if len(sim_list) == 0:
+        args.wait_time = 1
     s3.log.info("waiting for results %d seconds...\n\n" % (args.wait_time))
     time.sleep(args.wait_time)
 
@@ -141,10 +143,10 @@ def main():
         print("current dir path:  haim/{s3_path}/{i}/".format(s3_path=args.s3_path, i='{:04d}'.format(i)).replace('//', '/'))
         for obj in s3.objects('btx-job-request', 'haim/{s3_path}/{i}/'.format(s3_path=args.s3_path, i='{:04d}'.format(i)).replace('//', '/')):
             file_name = obj.key.split("/")[-1]
-            if  file_name.startswith(SCORE_FILENAME) and file_name.endswith("txt"):
+            if  file_name.startswith(args.score_filename) and file_name.endswith("txt"):
                 s3_path = args.s3_path + '{:04d}'.format(i)
                 down_dir = "\\".join(file_path.split("\\")[:-1])
-                down_path = down_dir + "\\" + SCORE_FILENAME + ".txt"
+                down_path = down_dir + "\\" + args.score_filename + ".txt"
                 success_arr[i] =  s3.get_file('btx-job-request', 'haim/{s3_path}/{filename}'.format(s3_path=s3_path,
                                                                                                     filename=file_name),
                                                                                                     down_path=down_path)
