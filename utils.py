@@ -2,7 +2,7 @@
 
 import sys
 import re
-import os
+import os, shutil
 import numpy as np
 import tensorflow as tf
 import argparse
@@ -13,10 +13,12 @@ def get_command_line_args(Config):
     ap.add_argument("--weight_decay", type=float, nargs=1, default=None, help='L2 weight normalization')
     ap.add_argument("--max_grad_norm", type=float, nargs=1, default=None, help='truncation of gradient magnitude')
     ap.add_argument("--drop_i", type=float, nargs=1, default=None, help='drop rate for input')
+    ap.add_argument("--drop_e", type=float, nargs=1, default=None, help='drop rate for input')
     ap.add_argument("--drop_h", type=float, nargs=1, default=None, help='drop rate for state')
     ap.add_argument("--drop_o", type=float, nargs=1, default=None, help='drop rate for RHN output')
     ap.add_argument("--mc_est", type=int, nargs=1, default=None, help='flag to decide if us monte carlo estimation')
     ap.add_argument("--mc_drop_i", type=float, nargs=1, default=None, help='MC drop rate for input')
+    ap.add_argument("--mc_drop_e", type=float, nargs=1, default=None, help='MC drop rate for input')
     ap.add_argument("--mc_drop_h", type=float, nargs=1, default=None, help='MC drop rate for state')
     ap.add_argument("--mc_drop_o", type=float, nargs=1, default=None, help='MC drop rate for RHN output')
     ap.add_argument("--mc_steps", type=int, nargs=1, default=None, help='number of MC iterations')
@@ -29,6 +31,7 @@ def get_command_line_args(Config):
     ap.add_argument("--num_layers", type=int, nargs=1, default=None, help='number of rhn layers')
     ap.add_argument("--depth", type=int, nargs=1, default=None, help='depth of each layer')
     ap.add_argument("--depth_out", type=int, nargs=1, default=0, help='layers after recurrent layers')
+    ap.add_argument("--emb_size", type=int, nargs=1, default=None, help='number of embedding neurons')
     ap.add_argument("--out_size", type=int, nargs=1, default=None, help='size of output')
     ap.add_argument("--adaptive_optimizer", type=str, nargs=1, default=None, help='which adaptive optimizer to use')
     ap.add_argument("--loss_func", type=str, nargs=1, default=None, help='what loss function to use')
@@ -119,12 +122,19 @@ def get_scores_mask(y, config):
         exit()
 
 
-def get_noise(m, drop_i, drop_h, drop_o, drop_l):
-    keep_i, keep_h, keep_o, keep_l = 1.0 - drop_i, 1.0 - drop_h, 1.0 - drop_o, 1 - drop_l
+def get_noise(m, drop_i, drop_h, drop_o, drop_l, drop_e):
+    keep_i, keep_h, keep_o, keep_l, keep_e = 1.0 - drop_i, 1.0 - drop_h, 1.0 - drop_o, 1 - drop_l, 1 - drop_e
     if keep_i < 1.0:
         noise_i = (np.random.random_sample((m.batch_size, m.in_size, m.num_layers)) < keep_i).astype(np.float32) / keep_i
     else:
         noise_i = np.ones((m.batch_size, m.in_size, m.num_layers), dtype=np.float32)
+    if m.emb_size != 0:
+        if keep_e < 1.0:
+            noise_e = (np.random.random_sample((m.batch_size, m.emb_size)) < keep_e).astype(np.float32) / keep_e
+        else:
+            noise_e = np.ones((m.batch_size, m.emb_size), dtype=np.float32)
+    else:
+        noise_e = None
     if keep_h < 1.0:
         noise_h = (np.random.random_sample((m.batch_size, m.size, m.num_layers)) < keep_h).astype(np.float32) / keep_h
     else:
@@ -140,7 +150,7 @@ def get_noise(m, drop_i, drop_h, drop_o, drop_l):
             noise_l = np.ones((m.batch_size, 1, m.n_experts*m.h_last), dtype=np.float32)
     else:
         noise_l = None
-    return noise_i, noise_h, noise_o, noise_l
+    return noise_i, noise_h, noise_o, noise_l, noise_e
 
 
 def reset_optimizer(session, name):
@@ -257,6 +267,11 @@ def get_documentation(config, Config):
     os.makedirs(documentation_dir + '/saver')
     print('simulation is saved to %s' % documentation_dir)
     print("process id = " + str(os.getpid()))
+
+    scripts = ['main.py', 'rhn_stocks.py', 'utils.py']
+    for sc in scripts:
+        dst_file = os.path.join(documentation_dir, os.path.basename(sc))
+        shutil.copyfile(sc, dst_file)
 
     # documentation of configurations
     print('')

@@ -24,6 +24,7 @@ class Config():
     weight_decay = 1e-07
     max_grad_norm = 0.8
     drop_i = 0.05
+    drop_e = 0.5
     drop_h = 0.3
     drop_o = 0.75
     hidden_size = 200
@@ -34,11 +35,12 @@ class Config():
     init_bias = -2.5
     num_layers = 1
     depth = 5
+    emb_size = 10
     depth_out = 0
     out_size = 1
     loss_func = "mse"
-    n_experts = 5
-    h_last = 100
+    n_experts = 1
+    h_last = 1
     drop_l = 0.5
 
     estimation_flag = True
@@ -51,6 +53,7 @@ class Config():
     mc_est = False
     mc_steps = 4
     mc_drop_i = 0.0
+    mc_drop_e = 0.0
     mc_drop_h = 0.2
     mc_drop_o = 0.5
     mc_drop_l = 0.5
@@ -86,7 +89,8 @@ def run_full_epoch(session, m, feats, tars, eval_op, config, verbose=False, test
     max_grad = 0.0
     costs = 0.0
     state = [x.eval() for x in m.initial_state]
-    noise_i, noise_h, noise_o, noise_l = get_noise(m, config.drop_i, config.drop_h, config.drop_o, config.drop_l)
+    noise_i, noise_h, noise_o, noise_l, noise_e = get_noise(m, config.drop_i, config.drop_h, config.drop_o, config.drop_l, config.drop_e)
+
     for i in range(epoch_size):
         if i==0 and verbose:
             lr = session.run(m.lr)
@@ -102,6 +106,8 @@ def run_full_epoch(session, m, feats, tars, eval_op, config, verbose=False, test
                     m.noise_i: noise_i, m.noise_h: noise_h, m.noise_o: noise_o}
         if noise_l is not None:
             feed_dict.update({m.noise_l: noise_l})
+        if noise_e is not None:
+            feed_dict.update({m.noise_e: noise_e})
 
         feed_dict.update({m.initial_state[i]: state[i] for i in range(m.num_layers)})
 
@@ -133,7 +139,7 @@ def run_full_epoch(session, m, feats, tars, eval_op, config, verbose=False, test
 def run_mc_epoch(session, m, feats, tars, eval_op, pred, config, test_wind):
     print("start monte carlo evaluation")
     if (m.batch_size != tars.shape[0]) or (m.num_steps != 1) or (
-                    config.drop_i + config.drop_h + config.drop_o != 0.0): print("not good properties my friend!")
+                    config.drop_i + config.drop_h + config.drop_o + config.drop_e + config.drop_l != 0.0): print("not good properties my friend!")
     mc_scores = np.zeros([tars.shape[0],test_wind[1]-test_wind[0], config.mc_steps])
 
     num_steps = m.num_steps
@@ -144,7 +150,7 @@ def run_mc_epoch(session, m, feats, tars, eval_op, pred, config, test_wind):
     for j in range(config.mc_steps):
 
         state = [x.eval() for x in m.initial_state]
-        noise_i, noise_h, noise_o, noise_l = get_noise(m, config.mc_drop_i, config.mc_drop_h, config.mc_drop_o, config.mc_drop_l)
+        noise_i, noise_h, noise_o, noise_l, noise_e = get_noise(m, config.mc_drop_i, config.mc_drop_h, config.mc_drop_o, config.mc_drop_l, config.mc_drop_e)
         for i in range(epoch_size):
 
             x = feats[:, i * num_steps:(i + 1) * num_steps,:]
@@ -156,6 +162,8 @@ def run_mc_epoch(session, m, feats, tars, eval_op, pred, config, test_wind):
                         m.noise_i: noise_i, m.noise_h: noise_h, m.noise_o: noise_o}
             if noise_l is not None:
                 feed_dict.update({m.noise_l: noise_l})
+            if noise_e is not None:
+                feed_dict.update({m.noise_e: noise_e})
 
             feed_dict.update({m.initial_state[i]: state[i] for i in range(m.num_layers)})
 
@@ -183,10 +191,11 @@ def run_algo():
 
     test_config = deepcopy(config)
 
-    test_config.drop_x = 0.0
     test_config.drop_i = 0.0
     test_config.drop_h = 0.0
     test_config.drop_o = 0.0
+    test_config.drop_l = 0.0
+    test_config.drop_e = 0.0
     test_config.num_steps = 1
     # test_config.batch_size = targets.shape[0]
 
@@ -388,9 +397,6 @@ def run_algo():
                 train_writer.add_summary(sum, test_window[1])
 
                 print("MC estimation time was %.0f" % (time.time() - st_time))
-
-
-
 
     print('')
     print("finished training")

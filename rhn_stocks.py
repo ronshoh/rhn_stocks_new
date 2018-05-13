@@ -16,34 +16,38 @@ class Model(object):
         self.depth = depth = config.depth
         self.size = size = config.hidden_size
         self.num_layers = num_layers = config.num_layers
-        self.num_of_features = num_of_features = config.num_of_features
+        self.tot_num_of_features = tot_num_of_features = config.num_of_features + config.emb_size
         self.n_experts = n_experts = config.n_experts
         self.h_last = h_last = config.h_last
 
         if config.input_mod is None:
-            self.in_size = rhn_in_size = config.num_of_features
+            self.in_size = rhn_in_size = tot_num_of_features
         else:
             self.in_size = rhn_in_size = config.hidden_size
 
+        self.emb_size = config.emb_size
         self.out_size = out_size = config.out_size
 
-        self._input_data = tf.placeholder(tf.float32, [batch_size, num_steps, num_of_features])
+        self._input_data = tf.placeholder(tf.float32, [batch_size, num_steps, config.num_of_features])
         self._targets = tf.placeholder(tf.float32, [batch_size, num_steps])
         self._mask = tf.placeholder(tf.float32, [batch_size, num_steps])
-        # self._noise_x = tf.placeholder(tf.float32, [batch_size, num_steps, 1])
         self._noise_i = tf.placeholder(tf.float32, [batch_size, rhn_in_size, num_layers])
         self._noise_h = tf.placeholder(tf.float32, [batch_size, size, num_layers])
         self._noise_o = tf.placeholder(tf.float32, [batch_size, 1, size])
 
-
+        if self.emb_size != 0:
+            self._noise_e = tf.placeholder(tf.float32, [batch_size, self.emb_size])
+            print("using embedding for each case")
+            self._embedding = tf.get_variable("embedding", [batch_size, self.emb_size])
+            embedding = self._embedding * self._noise_e
 
         if config.input_mod is None:
             inputs = self._input_data
             inp_mod = None
         else:
-            W_in_mat = tf.get_variable("W_in_mat", [num_of_features, size])
+            W_in_mat = tf.get_variable("W_in_mat", [tot_num_of_features, size])
             b_in = tf.get_variable("b_in", [size], initializer=tf.zeros_initializer())
-            inputs = tf.reshape(self._input_data, [-1, num_of_features])
+            inputs = tf.reshape(self._input_data, [-1, tot_num_of_features])
             inputs = tf.matmul(inputs, W_in_mat) + b_in
             inputs = tf.reshape(inputs, [batch_size, num_steps, size])
             inp_mod = bn_relu if config.input_mod == "bn_relu" else \
@@ -67,7 +71,11 @@ class Model(object):
                 for time_step in range(num_steps):
                     if time_step > 0:
                         tf.get_variable_scope().reuse_variables()
-                    (cell_output, state[l]) = cell(inputs[:, time_step, :], state[l], st_gate=config.state_gate,
+                    if l==0 and self.emb_size!=0:
+                        (cell_output, state[l]) = cell(tf.concat([inputs[:, time_step, :], embedding], 1), state[l], st_gate=config.state_gate,
+                                                   inp_mod=inp_mod)
+                    else:
+                        (cell_output, state[l]) = cell(inputs[:, time_step, :], state[l], st_gate=config.state_gate,
                                                    inp_mod=inp_mod)
                     outputs.append(cell_output)
                 inputs = tf.stack(outputs, axis=1)
@@ -139,7 +147,7 @@ class Model(object):
         if config.loss_func == "mse":
             pred_loss = mse_cost(self._targets, self._predictions, weights)
         elif config.loss_func == "mse_cost_std_normalized":
-            pred_loss = mse_cost(self._targets, self._predictions, weights)
+            pred_loss = mse_cost_std_normalized(self._targets, self._predictions, weights)
         elif config.loss_func == "minus_corr":
             pred_loss = minus_corr_cost(self._targets, self._predictions, weights)
         else:
@@ -248,6 +256,11 @@ class Model(object):
         return self._store_weights
 
     @property
+    def embedding(self):
+        return self._embedding
+
+
+    @property
     def set_asgd_weights(self):
         return self._set_asgd_weights
 
@@ -287,6 +300,10 @@ class Model(object):
         return self._input_data
 
     @property
+    def emb_inp(self):
+        return self._emb_inp
+
+    @property
     def targets(self):
         return self._targets
 
@@ -297,6 +314,10 @@ class Model(object):
     @property
     def noise_i(self):
         return self._noise_i
+
+    @property
+    def noise_e(self):
+        return self._noise_e
 
     @property
     def noise_h(self):
