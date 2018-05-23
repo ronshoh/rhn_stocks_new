@@ -6,6 +6,7 @@ import os, shutil
 import numpy as np
 import tensorflow as tf
 import argparse
+import scipy.io
 
 def get_command_line_args(Config):
     ap = argparse.ArgumentParser()
@@ -32,6 +33,7 @@ def get_command_line_args(Config):
     ap.add_argument("--depth", type=int, nargs=1, default=None, help='depth of each layer')
     ap.add_argument("--depth_out", type=int, nargs=1, default=0, help='layers after recurrent layers')
     ap.add_argument("--emb_size", type=int, nargs=1, default=None, help='number of embedding neurons')
+    ap.add_argument("--emb_groups", type=str, nargs=1, default=None, help='what type of embedding groups')
     ap.add_argument("--out_size", type=int, nargs=1, default=None, help='size of output')
     ap.add_argument("--adaptive_optimizer", type=str, nargs=1, default=None, help='which adaptive optimizer to use')
     ap.add_argument("--loss_func", type=str, nargs=1, default=None, help='what loss function to use')
@@ -208,6 +210,9 @@ class Logger(object):
         #you might want to specify some extra behavior here.
         pass
 
+    def encoding(self):
+        pass
+
 
 def get_rand_seed():
     proc_id = os.getpid()
@@ -311,3 +316,16 @@ def train_windows_producer(config, max_time):
         start_list.append(0)
     print(start_list[-1], end_list[-1])
     return zip(start_list, end_list)
+
+
+def get_embedding_groups(emb_groups):
+    if emb_groups == "none":
+        return None
+    groups = scipy.io.loadmat('groups.mat')
+    return groups[emb_groups][0]
+
+
+def get_idx_group(groups, idx):
+    for i in range(len(groups)):
+        if idx+1 in groups[i]:
+            return i

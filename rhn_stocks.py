@@ -5,7 +5,7 @@ import numpy as np
 from tensorflow.python.ops import math_ops, array_ops
 from tensorflow.python.util import nest
 from tensorflow.contrib.rnn import RNNCell
-
+from utils import get_embedding_groups, get_idx_group
 
 class Model(object):
     """A Variational RHN model."""
@@ -36,10 +36,17 @@ class Model(object):
         self._noise_o = tf.placeholder(tf.float32, [batch_size, 1, size])
 
         if self.emb_size != 0:
+            groups = get_embedding_groups(config.emb_groups)
             self._noise_e = tf.placeholder(tf.float32, [batch_size, self.emb_size])
-            print("using embedding for each case")
-            self._embedding = tf.get_variable("embedding", [batch_size, self.emb_size])
+            print("using embedding with groups=" + config.emb_groups)
+            if groups is None:
+                self._embedding = tf.get_variable("embedding", [batch_size, self.emb_size])
+            else:
+                embedding_vectors = tf.get_variable("embedding", [len(groups), self.emb_size])
+                embedding_pre = [embedding_vectors[get_idx_group(groups, i), :] for i in range(batch_size)]
+                self._embedding = tf.stack(embedding_pre, axis=0)
             embedding = self._embedding * self._noise_e
+
 
         if config.input_mod is None:
             inputs = self._input_data
@@ -589,8 +596,11 @@ def bn(x, name_scope='bn', training=False, epsilon=1e-4, decay=0.999):
 def bn_relu(x):
     return tf.nn.relu(bn(x))
 
+
 def bn_tanh(x):
     return tf.tanh(bn(x))
 
+
 def linear_tanh(x):
     return tf.tanh(x)
+

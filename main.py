@@ -36,6 +36,7 @@ class Config():
     num_layers = 1
     depth = 5
     emb_size = 10
+    emb_groups = "none" # can be "none"/"groups1"/groups2"
     depth_out = 0
     out_size = 1
     loss_func = "mse"
@@ -61,7 +62,7 @@ class Config():
     # windows
     reset_weights_flag = True
     start_time = 4000
-    wind_step_size = 800
+    wind_step_size = 100
     switch_to_asgd = 30
     decay_epochs = [15,23,30]
     learning_rate = 0.001
@@ -73,6 +74,7 @@ class Config():
 
     numpy_seed = None
     tf_seed = None
+
 
 get_command_line_args(Config)
 
