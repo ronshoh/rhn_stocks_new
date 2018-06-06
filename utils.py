@@ -17,11 +17,13 @@ def get_command_line_args(Config):
     ap.add_argument("--drop_e", type=float, nargs=1, default=None, help='drop rate for input')
     ap.add_argument("--drop_h", type=float, nargs=1, default=None, help='drop rate for state')
     ap.add_argument("--drop_o", type=float, nargs=1, default=None, help='drop rate for RHN output')
+    ap.add_argument("--drop_g", type=float, nargs=1, default=None, help='drop rate for global')
     ap.add_argument("--mc_est", type=int, nargs=1, default=None, help='flag to decide if us monte carlo estimation')
     ap.add_argument("--mc_drop_i", type=float, nargs=1, default=None, help='MC drop rate for input')
     ap.add_argument("--mc_drop_e", type=float, nargs=1, default=None, help='MC drop rate for input')
     ap.add_argument("--mc_drop_h", type=float, nargs=1, default=None, help='MC drop rate for state')
     ap.add_argument("--mc_drop_o", type=float, nargs=1, default=None, help='MC drop rate for RHN output')
+    ap.add_argument("--mc_drop_g", type=float, nargs=1, default=None, help='MC drop rate for global')
     ap.add_argument("--mc_steps", type=int, nargs=1, default=None, help='number of MC iterations')
     ap.add_argument("--hidden_size", type=int, nargs=1, default=None, help='state size')
     ap.add_argument("--mask", type=float, nargs='*', default=None, help='target msking')
@@ -34,6 +36,9 @@ def get_command_line_args(Config):
     ap.add_argument("--depth_out", type=int, nargs=1, default=0, help='layers after recurrent layers')
     ap.add_argument("--emb_size", type=int, nargs=1, default=None, help='number of embedding neurons')
     ap.add_argument("--emb_groups", type=str, nargs=1, default=None, help='what type of embedding groups')
+    ap.add_argument("--glob_feat_in_size", type=int, nargs=1, default=None, help='number of global neurons')
+    ap.add_argument("--glob_feat_groups", type=str, nargs=1, default=None, help='what type of global groups')
+    ap.add_argument("--glob_feat_conf", type=str, nargs=1, default=None, help='what type of global configuration')
     ap.add_argument("--out_size", type=int, nargs=1, default=None, help='size of output')
     ap.add_argument("--adaptive_optimizer", type=str, nargs=1, default=None, help='which adaptive optimizer to use')
     ap.add_argument("--loss_func", type=str, nargs=1, default=None, help='what loss function to use')
@@ -124,8 +129,8 @@ def get_scores_mask(y, config):
         exit()
 
 
-def get_noise(m, drop_i, drop_h, drop_o, drop_l, drop_e):
-    keep_i, keep_h, keep_o, keep_l, keep_e = 1.0 - drop_i, 1.0 - drop_h, 1.0 - drop_o, 1 - drop_l, 1 - drop_e
+def get_noise(m, drop_i, drop_h, drop_o, drop_l, drop_e, drop_g):
+    keep_i, keep_h, keep_o, keep_l, keep_e, keep_g = 1.0 - drop_i, 1.0 - drop_h, 1.0 - drop_o, 1 - drop_l, 1 - drop_e, 1 - drop_g
     if keep_i < 1.0:
         noise_i = (np.random.random_sample((m.batch_size, m.in_size, m.num_layers)) < keep_i).astype(np.float32) / keep_i
     else:
@@ -145,6 +150,10 @@ def get_noise(m, drop_i, drop_h, drop_o, drop_l, drop_e):
         noise_o = (np.random.random_sample((m.batch_size, 1, m.size)) < keep_o).astype(np.float32) / keep_o
     else:
         noise_o = np.ones((m.batch_size, 1, m.size), dtype=np.float32)
+    if keep_g < 1.0:
+        noise_g = (np.random.random_sample((m.batch_size, 1, m.glob_feat_in_size)) < keep_g).astype(np.float32) / keep_g
+    else:
+        noise_g = np.ones((m.batch_size, 1, m.glob_feat_in_size), dtype=np.float32)
     if m.n_experts > 1 and m.h_last > 1:
         if keep_l < 1.0:
             noise_l = (np.random.random_sample((m.batch_size, 1, m.n_experts*m.h_last)) < keep_l).astype(np.float32) / keep_l
@@ -152,7 +161,7 @@ def get_noise(m, drop_i, drop_h, drop_o, drop_l, drop_e):
             noise_l = np.ones((m.batch_size, 1, m.n_experts*m.h_last), dtype=np.float32)
     else:
         noise_l = None
-    return noise_i, noise_h, noise_o, noise_l, noise_e
+    return noise_i, noise_h, noise_o, noise_l, noise_e, noise_g
 
 
 def reset_optimizer(session, name):
@@ -329,3 +338,24 @@ def get_idx_group(groups, idx):
     for i in range(len(groups)):
         if idx+1 in groups[i]:
             return i
+
+
+def get_glob_feat_idx_list(conf):
+    l_1 = [0,1,2,3,7,8,9,10]
+    l_2 = [i for i in range(25)]
+    l_3 = [i for i in range(198,211)]
+    if conf == "conf_1":
+        return l_1
+    elif conf == "conf_2":
+        return l_2
+    elif conf == "conf_3":
+        return l_1 + l_3
+    elif conf == "conf_4":
+        return l_2 + l_3
+    elif conf == "conf_5":
+        return l_3
+    elif conf == "all":
+        return [i for i in range(211)]
+    else:
+        print("non valid configuration for get_glob_feat_idx_list (conf=" + str(conf) + ").. exiting!")
+        exit()

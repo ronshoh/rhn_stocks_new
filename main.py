@@ -43,6 +43,10 @@ class Config():
     n_experts = 1
     h_last = 1
     drop_l = 0.5
+    drop_g = 0.3
+    glob_feat_groups = "groups1" # can be "none"/"groups1"/groups2"
+    glob_feat_in_size = 10
+    glob_feat_conf = "conf_1"
 
     estimation_flag = True
     estimation_epoch = 5
@@ -58,6 +62,7 @@ class Config():
     mc_drop_h = 0.2
     mc_drop_o = 0.5
     mc_drop_l = 0.5
+    mc_drop_g = 0.5
 
     # windows
     reset_weights_flag = True
@@ -79,7 +84,7 @@ class Config():
 get_command_line_args(Config)
 
 
-def run_full_epoch(session, m, feats, tars, eval_op, config, verbose=False, test_wind="all", asgd_flag=False):
+def run_full_epoch(session, m, feats, glob_feats, tars, eval_op, config, verbose=False, test_wind="all", asgd_flag=False):
     prediction_tot = np.zeros_like(tars)
     num_steps = m.num_steps
     epoch_size = feats.shape[1] // num_steps
@@ -91,7 +96,7 @@ def run_full_epoch(session, m, feats, tars, eval_op, config, verbose=False, test
     max_grad = 0.0
     costs = 0.0
     state = [x.eval() for x in m.initial_state]
-    noise_i, noise_h, noise_o, noise_l, noise_e = get_noise(m, config.drop_i, config.drop_h, config.drop_o, config.drop_l, config.drop_e)
+    noise_i, noise_h, noise_o, noise_l, noise_e, noise_g = get_noise(m, config.drop_i, config.drop_h, config.drop_o, config.drop_l, config.drop_e, config.drop_g)
 
     for i in range(epoch_size):
         if i==0 and verbose:
@@ -103,9 +108,13 @@ def run_full_epoch(session, m, feats, tars, eval_op, config, verbose=False, test
         y = tars[:, i * num_steps:(i + 1) * num_steps]
 
         scores_mask = get_scores_mask(y, config)
-
-        feed_dict = {m.input_data: x, m.targets: y, m.mask: scores_mask,
-                    m.noise_i: noise_i, m.noise_h: noise_h, m.noise_o: noise_o}
+        if config.glob_feat_in_size != 0:
+            x_g = glob_feats[i * num_steps:(i + 1) * num_steps, :]
+            feed_dict = {m.input_data: x, m.input_data_glob: x_g, m.targets: y, m.mask: scores_mask,
+                        m.noise_i: noise_i, m.noise_h: noise_h, m.noise_o: noise_o, m.noise_g: noise_g}
+        else:
+            feed_dict = {m.input_data: x, m.targets: y, m.mask: scores_mask,
+                        m.noise_i: noise_i, m.noise_h: noise_h, m.noise_o: noise_o}
         if noise_l is not None:
             feed_dict.update({m.noise_l: noise_l})
         if noise_e is not None:
@@ -138,10 +147,10 @@ def run_full_epoch(session, m, feats, tars, eval_op, config, verbose=False, test
     return (costs / (test_wind[1] - test_wind[0])), prediction_tot
 
 
-def run_mc_epoch(session, m, feats, tars, eval_op, pred, config, test_wind):
+def run_mc_epoch(session, m, feats, glob_feats, tars, eval_op, pred, config, test_wind):
     print("start monte carlo evaluation")
     if (m.batch_size != tars.shape[0]) or (m.num_steps != 1) or (
-                    config.drop_i + config.drop_h + config.drop_o + config.drop_e + config.drop_l != 0.0): print("not good properties my friend!")
+                    config.drop_i + config.drop_h + config.drop_o + config.drop_e + config.drop_l + config.drop_g != 0.0): print("not good properties my friend!")
     mc_scores = np.zeros([tars.shape[0],test_wind[1]-test_wind[0], config.mc_steps])
 
     num_steps = m.num_steps
@@ -152,7 +161,7 @@ def run_mc_epoch(session, m, feats, tars, eval_op, pred, config, test_wind):
     for j in range(config.mc_steps):
 
         state = [x.eval() for x in m.initial_state]
-        noise_i, noise_h, noise_o, noise_l, noise_e = get_noise(m, config.mc_drop_i, config.mc_drop_h, config.mc_drop_o, config.mc_drop_l, config.mc_drop_e)
+        noise_i, noise_h, noise_o, noise_l, noise_e, noise_g = get_noise(m, config.mc_drop_i, config.mc_drop_h, config.mc_drop_o, config.mc_drop_l, config.mc_drop_e, config.mc_drop_g)
         for i in range(epoch_size):
 
             x = feats[:, i * num_steps:(i + 1) * num_steps,:]
@@ -160,8 +169,13 @@ def run_mc_epoch(session, m, feats, tars, eval_op, pred, config, test_wind):
 
             scores_mask = get_scores_mask(y, config)
 
-            feed_dict = {m.input_data: x, m.targets: y, m.mask: scores_mask,
-                        m.noise_i: noise_i, m.noise_h: noise_h, m.noise_o: noise_o}
+            if config.glob_feat_in_size != 0:
+                x_g = glob_feats[i * num_steps:(i + 1) * num_steps,:]
+                feed_dict = {m.input_data: x, m.input_data_glob: x_g, m.targets: y, m.mask: scores_mask,
+                            m.noise_i: noise_i, m.noise_h: noise_h, m.noise_o: noise_o, m.noise_g: noise_g}
+            else:
+                feed_dict = {m.input_data: x, m.targets: y, m.mask: scores_mask,
+                             m.noise_i: noise_i, m.noise_h: noise_h, m.noise_o: noise_o}
             if noise_l is not None:
                 feed_dict.update({m.noise_l: noise_l})
             if noise_e is not None:
@@ -198,6 +212,7 @@ def run_algo():
     test_config.drop_o = 0.0
     test_config.drop_l = 0.0
     test_config.drop_e = 0.0
+    test_config.drop_g = 0.0
     test_config.num_steps = 1
     # test_config.batch_size = targets.shape[0]
 
@@ -210,6 +225,7 @@ def run_algo():
     tf.set_random_seed(config.tf_seed)
 
     test_feat = features          #[:,config.train_time:,:]
+    test_glob_feat = global_features          #[:,config.train_time:,:]
     test_tar = targets[:,:,2]    #[:,config.train_time:,2]
     prediction_tot = np.zeros_like(targets[:, :, 2])
     if config.mc_est:
@@ -237,6 +253,7 @@ def run_algo():
                   (test_window[0] ,test_window[1], train_time_st, train_time_end))
 
             train_feat = features[:, train_time_st:train_time_end, :]
+            train_glob_feat = global_features[train_time_st:train_time_end, :]
             train_tar = targets[:, train_time_st:train_time_end, 2]
 
             reset_optimizer(session, config.adaptive_optimizer)
@@ -259,7 +276,7 @@ def run_algo():
                     st_time = time.time()
                     if asgd_flag:
                         mtrain.store_set_asgd_weights(session)
-                    costs, predictions = run_full_epoch(session, mtest, test_feat, test_tar, tf.no_op(),
+                    costs, predictions = run_full_epoch(session, mtest, test_feat, test_glob_feat, test_tar, tf.no_op(),
                                                         config=test_config, test_wind=test_window)
 
                     accuracy_window_1, _, _, corr_window_1, _, _, _, _, _, _, _, top_10_acc_wind_1, _ = \
@@ -318,7 +335,7 @@ def run_algo():
                     optimizer = mtrain.train_op_sgd
                     asgd_flag = True
 
-                costs, _ = run_full_epoch(session, mtrain, train_feat, train_tar, optimizer, config=config,
+                costs, _ = run_full_epoch(session, mtrain, train_feat, train_glob_feat, train_tar, optimizer, config=config,
                                           verbose=True, asgd_flag=asgd_flag)
 
                 print("finished epoch. Time passed: %.0f " % (time.time() - st_time))
@@ -329,7 +346,7 @@ def run_algo():
             st_time = time.time()
             print('')
             print("finished training on window %d:%d.. final estimation" % (train_time_st, train_time_end))
-            costs, predictions = run_full_epoch(session, mtest, test_feat, test_tar, tf.no_op(), config=test_config,
+            costs, predictions = run_full_epoch(session, mtest, test_feat, test_glob_feat, test_tar, tf.no_op(), config=test_config,
                                                 test_wind=test_window)
 
             accuracy_window_1, _, _, corr_window_1, _, _, _, _, _, _, _, top_10_acc_wind_1, _ = bb.black_box(
@@ -373,7 +390,7 @@ def run_algo():
                 st_time = time.time()
                 print("starting MC estimation")
                 mc_final, mc_std, mc_misspecification = \
-                    run_mc_epoch(session, mtest, test_feat, test_tar, tf.no_op(), predictions[:, test_window[0]:test_window[1]], config=test_config, test_wind=test_window)
+                    run_mc_epoch(session, mtest, test_feat, test_glob_feat, test_tar, tf.no_op(), predictions[:, test_window[0]:test_window[1]], config=test_config, test_wind=test_window)
                 prediction_tot_mc[:, test_window[0]:test_window[1]] = deepcopy(mc_final)
                 std_tot_mc[:, test_window[0]:test_window[1]] = deepcopy(mc_std)
                 misspecification_tot_mc[:, test_window[0]:test_window[1]] = deepcopy(mc_misspecification)
@@ -531,7 +548,21 @@ def run_algo():
 
 
 ##### pre-main #####
+Config.glob_feat_idx_list = get_glob_feat_idx_list(Config.glob_feat_conf)
 config = Config()
+
+print("loading global DB")
+f = h5py.File('CCver5_Global_db.mat')
+
+data = {}
+
+for k, v in f.items():
+    if k == 'features':
+        data[k] = np.array(v)
+
+global_features = data["features"][:, Config.glob_feat_idx_list]
+global_features = np.nan_to_num(global_features)
+
 
 print("loading DB")
 f = h5py.File(config.DB_name + '.mat')
@@ -554,11 +585,13 @@ del f
 # features = f['features']
 # del f
 
-print(targets.shape, features.shape)
+print(targets.shape, features.shape, global_features.shape)
 
 print("converting nan to num")
 features = features_nan_to_num(features)
 targets = targets_nan_to_num(targets)
+
+
 
 del config
 

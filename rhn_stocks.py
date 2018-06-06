@@ -16,7 +16,7 @@ class Model(object):
         self.depth = depth = config.depth
         self.size = size = config.hidden_size
         self.num_layers = num_layers = config.num_layers
-        self.tot_num_of_features = tot_num_of_features = config.num_of_features + config.emb_size
+        self.tot_num_of_features = tot_num_of_features = config.num_of_features + config.emb_size + config.glob_feat_in_size
         self.n_experts = n_experts = config.n_experts
         self.h_last = h_last = config.h_last
 
@@ -26,6 +26,7 @@ class Model(object):
             self.in_size = rhn_in_size = config.hidden_size
 
         self.emb_size = config.emb_size
+        self.glob_feat_in_size = config.glob_feat_in_size
         self.out_size = out_size = config.out_size
 
         self._input_data = tf.placeholder(tf.float32, [batch_size, num_steps, config.num_of_features])
@@ -34,6 +35,8 @@ class Model(object):
         self._noise_i = tf.placeholder(tf.float32, [batch_size, rhn_in_size, num_layers])
         self._noise_h = tf.placeholder(tf.float32, [batch_size, size, num_layers])
         self._noise_o = tf.placeholder(tf.float32, [batch_size, 1, size])
+
+        inputs = self._input_data
 
         if self.emb_size != 0:
             groups = get_embedding_groups(config.emb_groups)
@@ -48,13 +51,33 @@ class Model(object):
             embedding = self._embedding * self._noise_e
 
 
+        if config.glob_feat_in_size != 0:
+            self._input_data_glob = tf.placeholder(tf.float32, [num_steps, len(config.glob_feat_idx_list)])
+            self._noise_g = tf.placeholder(tf.float32, [batch_size, 1, config.glob_feat_in_size])
+            groups = get_embedding_groups(config.glob_feat_groups)
+            print("using global features")
+            if groups is None:
+                glob_in_mat = tf.get_variable("glob_in_mat", [len(config.glob_feat_idx_list), self.glob_feat_in_size])
+                glob_in_b = tf.get_variable("glob_in_b", [self.glob_feat_in_size], initializer=tf.zeros_initializer())
+                glob_inputs_pre = tf.matmul(self._input_data_glob, glob_in_mat) + glob_in_b
+                glob_inputs =  tf.stack([glob_inputs_pre for i in range(batch_size)], axis=0)
+                inputs = tf.concat([inputs, glob_inputs * self._noise_g], 2)
+            else:
+                glob_in_mat = tf.get_variable("glob_in_mat", [len(config.glob_feat_idx_list), self.glob_feat_in_size*len(groups)])
+                glob_in_b = tf.get_variable("glob_in_b", [self.glob_feat_in_size*len(groups)], initializer=tf.zeros_initializer())
+                glob_inputs_pre = tf.matmul(self._input_data_glob, glob_in_mat) + glob_in_b
+                glob_inputs_pre = tf.reshape(glob_inputs_pre,[num_steps, self.glob_feat_in_size, len(groups)])
+                glob_inputs = tf.stack([glob_inputs_pre[:, :, get_idx_group(groups, i)] for i in range(batch_size)], axis=0)
+                inputs = tf.concat([inputs, glob_inputs * self._noise_g], 2)
+
+
+
         if config.input_mod is None:
-            inputs = self._input_data
             inp_mod = None
         else:
             W_in_mat = tf.get_variable("W_in_mat", [tot_num_of_features, size])
             b_in = tf.get_variable("b_in", [size], initializer=tf.zeros_initializer())
-            inputs = tf.reshape(self._input_data, [-1, tot_num_of_features])
+            inputs = tf.reshape(inputs, [-1, tot_num_of_features])
             inputs = tf.matmul(inputs, W_in_mat) + b_in
             inputs = tf.reshape(inputs, [batch_size, num_steps, size])
             inp_mod = bn_relu if config.input_mod == "bn_relu" else \
@@ -78,7 +101,7 @@ class Model(object):
                 for time_step in range(num_steps):
                     if time_step > 0:
                         tf.get_variable_scope().reuse_variables()
-                    if l==0 and self.emb_size!=0:
+                    if l==0 and self.emb_size != 0:
                         (cell_output, state[l]) = cell(tf.concat([inputs[:, time_step, :], embedding], 1), state[l], st_gate=config.state_gate,
                                                    inp_mod=inp_mod)
                     else:
@@ -306,9 +329,20 @@ class Model(object):
     def input_data(self):
         return self._input_data
 
+
     @property
-    def emb_inp(self):
-        return self._emb_inp
+    def input_data_glob(self):
+        return self._input_data_glob
+
+
+    @property
+    def noise_g(self):
+        return self._noise_g
+
+
+    # @property
+    # def emb_inp(self):
+    #     return self._emb_inp
 
     @property
     def targets(self):
