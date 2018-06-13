@@ -19,7 +19,6 @@ import stocks_black_box as bb
 class Config():
 
     # architecture
-    input_mod = None # None/"linear"/"ln"/"ln_relu"/"bn"/"bn_relu"/"bn_tanh"/"linear_tanh"
 
     weight_decay = 1e-07
     max_grad_norm = 0.8

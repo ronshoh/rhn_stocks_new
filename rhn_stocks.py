@@ -5,7 +5,7 @@ import numpy as np
 from tensorflow.python.ops import math_ops, array_ops
 from tensorflow.python.util import nest
 from tensorflow.contrib.rnn import RNNCell
-from utils import get_embedding_groups, get_idx_group
+from utils import get_embedding_groups, get_idx_group, get_global_groups
 
 class Model(object):
     """A Variational RHN model."""
@@ -20,10 +20,7 @@ class Model(object):
         self.n_experts = n_experts = config.n_experts
         self.h_last = h_last = config.h_last
 
-        if config.input_mod is None:
-            self.in_size = rhn_in_size = tot_num_of_features
-        else:
-            self.in_size = rhn_in_size = config.hidden_size
+        self.in_size = rhn_in_size = tot_num_of_features
 
         self.emb_size = config.emb_size
         self.glob_feat_in_size = config.glob_feat_in_size
@@ -53,40 +50,7 @@ class Model(object):
 
         if config.glob_feat_in_size != 0:
             self._input_data_glob = tf.placeholder(tf.float32, [num_steps, len(config.glob_feat_idx_list)])
-            self._noise_g = tf.placeholder(tf.float32, [batch_size, 1, config.glob_feat_in_size])
-            groups = get_embedding_groups(config.glob_feat_groups)
-            print("using global features")
-            if groups is None:
-                glob_in_mat = tf.get_variable("glob_in_mat", [len(config.glob_feat_idx_list), self.glob_feat_in_size])
-                glob_in_b = tf.get_variable("glob_in_b", [self.glob_feat_in_size], initializer=tf.zeros_initializer())
-                glob_inputs_pre = tf.matmul(self._input_data_glob, glob_in_mat) + glob_in_b
-                glob_inputs =  tf.stack([glob_inputs_pre for i in range(batch_size)], axis=0)
-                inputs = tf.concat([inputs, glob_inputs * self._noise_g], 2)
-            else:
-                glob_in_mat = tf.get_variable("glob_in_mat", [len(config.glob_feat_idx_list), self.glob_feat_in_size*len(groups)])
-                glob_in_b = tf.get_variable("glob_in_b", [self.glob_feat_in_size*len(groups)], initializer=tf.zeros_initializer())
-                glob_inputs_pre = tf.matmul(self._input_data_glob, glob_in_mat) + glob_in_b
-                glob_inputs_pre = tf.reshape(glob_inputs_pre,[num_steps, self.glob_feat_in_size, len(groups)])
-                glob_inputs = tf.stack([glob_inputs_pre[:, :, get_idx_group(groups, i)] for i in range(batch_size)], axis=0)
-                inputs = tf.concat([inputs, glob_inputs * self._noise_g], 2)
-
-
-
-        if config.input_mod is None:
-            inp_mod = None
-        else:
-            W_in_mat = tf.get_variable("W_in_mat", [tot_num_of_features, size])
-            b_in = tf.get_variable("b_in", [size], initializer=tf.zeros_initializer())
-            inputs = tf.reshape(inputs, [-1, tot_num_of_features])
-            inputs = tf.matmul(inputs, W_in_mat) + b_in
-            inputs = tf.reshape(inputs, [batch_size, num_steps, size])
-            inp_mod = bn_relu if config.input_mod == "bn_relu" else \
-                      bn if config.input_mod == "bn" else \
-                      bn_tanh if config.input_mod == "bn_tanh" else \
-                      ln_relu if config.input_mod == "ln_relu" else \
-                      ln if config.input_mod == "ln" else \
-                      linear_tanh if config.input_mod == "linear_tanh" else\
-                      None if config.input_mod == "linear" else -1
+            self._noise_g = tf.placeholder(tf.float32, [batch_size, config.glob_feat_in_size])
 
         outputs = []
         self._initial_state = [0] * self.num_layers
@@ -101,12 +65,17 @@ class Model(object):
                 for time_step in range(num_steps):
                     if time_step > 0:
                         tf.get_variable_scope().reuse_variables()
+
+                    curr_inp = inputs[:, time_step, :]
+
+                    if config.glob_feat_in_size != 0:
+                        glob_inputs = self.get_glob_inputs(config, time_step)
+                        curr_inp = tf.concat([curr_inp, glob_inputs * self.noise_g], 1)
                     if l==0 and self.emb_size != 0:
-                        (cell_output, state[l]) = cell(tf.concat([inputs[:, time_step, :], embedding], 1), state[l], st_gate=config.state_gate,
-                                                   inp_mod=inp_mod)
+                        (cell_output, state[l]) = cell(tf.concat([curr_inp, embedding], 1), state[l], st_gate=config.state_gate)
                     else:
-                        (cell_output, state[l]) = cell(inputs[:, time_step, :], state[l], st_gate=config.state_gate,
-                                                   inp_mod=inp_mod)
+                        (cell_output, state[l]) = cell(curr_inp, state[l], st_gate=config.state_gate)
+
                     outputs.append(cell_output)
                 inputs = tf.stack(outputs, axis=1)
                 outputs = []
@@ -254,6 +223,31 @@ class Model(object):
 
                     self._return_regular_weights = [tf.assign(self._tvars[i], var) for i, var
                                                     in enumerate(self._temp_weights)]
+
+    def get_glob_inputs(self, config, time_step):
+        groups = get_global_groups(config.glob_feat_groups)
+        if groups is None:
+            glob_in_mat = tf.get_variable("glob_in_mat",
+                                          [len(config.glob_feat_idx_list), self.glob_feat_in_size])
+            glob_in_b = tf.get_variable("glob_in_b", [self.glob_feat_in_size],
+                                        initializer=tf.zeros_initializer())
+            glob_inputs_pre = tf.matmul(self._input_data_glob[time_step:time_step + 1, :], glob_in_mat) + glob_in_b
+            return tf.tile(glob_inputs_pre, [self.batch_size, 1])
+        elif groups is "per_case":
+            glob_in_mat = tf.get_variable("glob_in_mat",
+                                          [len(config.glob_feat_idx_list), self.glob_feat_in_size * self.batch_size])
+            glob_in_b = tf.get_variable("glob_in_b", [self.glob_feat_in_size * self.batch_size],
+                                        initializer=tf.zeros_initializer())
+            glob_inputs_pre = tf.matmul(self._input_data_glob[time_step:time_step + 1, :], glob_in_mat) + glob_in_b
+            return tf.reshape(glob_inputs_pre, [self.batch_size, self.glob_feat_in_size])
+        else:
+            glob_in_mat = tf.get_variable("glob_in_mat",
+                                          [len(config.glob_feat_idx_list), self.glob_feat_in_size * len(groups)])
+            glob_in_b = tf.get_variable("glob_in_b", [self.glob_feat_in_size * len(groups)],
+                                        initializer=tf.zeros_initializer())
+            glob_inputs_pre = tf.matmul(self._input_data_glob[time_step:time_step + 1, :], glob_in_mat) + glob_in_b
+            glob_inputs_pre = tf.reshape(glob_inputs_pre, [self.glob_feat_in_size, len(groups)])
+            return tf.stack([glob_inputs_pre[:, get_idx_group(groups, i)] for i in range(self.batch_size)], axis=0)
 
 
     def reset_asgd(self, session):
@@ -428,13 +422,10 @@ class RHNCell(RNNCell):
     def state_size(self):
         return self._num_units
 
-    def __call__(self, inputs, state, inp_mod=None, st_gate=False, scope=None):
+    def __call__(self, inputs, state, st_gate=False, scope=None):
         former_state = current_state = state[0]
         noise_i = state[1]
         noise_h = state[2]
-        if inp_mod is not None:
-            with tf.variable_scope('inp_mod'):
-                inputs = inp_mod(inputs)
         for i in range(self.depth):
             with tf.variable_scope('h_' + str(i)):
                 if i == 0:

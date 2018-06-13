@@ -151,9 +151,9 @@ def get_noise(m, drop_i, drop_h, drop_o, drop_l, drop_e, drop_g):
     else:
         noise_o = np.ones((m.batch_size, 1, m.size), dtype=np.float32)
     if keep_g < 1.0:
-        noise_g = (np.random.random_sample((m.batch_size, 1, m.glob_feat_in_size)) < keep_g).astype(np.float32) / keep_g
+        noise_g = (np.random.random_sample((m.batch_size, m.glob_feat_in_size)) < keep_g).astype(np.float32) / keep_g
     else:
-        noise_g = np.ones((m.batch_size, 1, m.glob_feat_in_size), dtype=np.float32)
+        noise_g = np.ones((m.batch_size, m.glob_feat_in_size), dtype=np.float32)
     if m.n_experts > 1 and m.h_last > 1:
         if keep_l < 1.0:
             noise_l = (np.random.random_sample((m.batch_size, 1, m.n_experts*m.h_last)) < keep_l).astype(np.float32) / keep_l
@@ -333,6 +333,14 @@ def get_embedding_groups(emb_groups):
     groups = scipy.io.loadmat('groups.mat')
     return groups[emb_groups][0]
 
+
+def get_global_groups(glob_groups):
+    if glob_groups == "none":
+        return None
+    if glob_groups == "per_case":
+        return "per_case"
+    groups = scipy.io.loadmat('groups.mat')
+    return groups[glob_groups][0]
 
 def get_idx_group(groups, idx):
     for i in range(len(groups)):
