@@ -7,6 +7,7 @@ import numpy as np
 import tensorflow as tf
 import argparse
 import scipy.io
+import time
 
 def get_command_line_args(Config):
     ap = argparse.ArgumentParser()
@@ -30,6 +31,7 @@ def get_command_line_args(Config):
     ap.add_argument("--num_steps", type=int, nargs=1, default=None, help='length of BPTT')
     ap.add_argument("--init_scale", type=float, nargs=1, default=None, help='scaling for weight initialization')
     ap.add_argument("--state_gate", type=int, nargs=1, default=None, help='flag to use state gating')
+    ap.add_argument("--offset_flag", type=int, nargs=1, default=None, help='flag to use offset at time per case')
     ap.add_argument("--init_bias", type=float, nargs=1, default=None, help='bias for gating')
     ap.add_argument("--num_layers", type=int, nargs=1, default=None, help='number of rhn layers')
     ap.add_argument("--depth", type=int, nargs=1, default=None, help='depth of each layer')
@@ -45,6 +47,7 @@ def get_command_line_args(Config):
     ap.add_argument("--reset_weights_flag", type=int, nargs=1, default=None,
                     help='flag to reste weights between each time window')
     ap.add_argument("--start_time", type=int, nargs=1, default=None, help='time to start testing')
+    ap.add_argument("--first_scores_mask", type=int, nargs=1, default=None, help='time to start testing')
     ap.add_argument("--wind_step_size", type=int, nargs=1, default=None, help='time between test windows')
     ap.add_argument("--switch_to_asgd", type=int, nargs=1, default=None, help='what epoch to switch to ASGD')
     ap.add_argument("--decay_epochs", type=int, nargs='*', default=None,
@@ -116,17 +119,20 @@ def get_scores_mask(y, config):
     #       of the others to be unmasked
     # nan targets (with value 0) will be masked anyway
     if len(config.mask) == 1: # treshold
-        return np.array(abs(y) > config.mask[0], dtype=np.float32)
+        mask = np.array(abs(y) > config.mask[0], dtype=np.float32)
     elif len(config.mask) == 2: # threshold + probability for low targets
         random_mask = np.array(abs(y) > config.mask[0], dtype=np.float32) + np.random.random_sample(y.shape)
-        return np.array(random_mask > 1-config.mask[1], dtype=np.float32) * (y != 0)
+        mask = np.array(random_mask > 1-config.mask[1], dtype=np.float32) * (y != 0)
     elif len(config.mask) == 3: # threshold + probability for high targets + probability for low targets
         thresholds = config.mask[1] * np.array(abs(y) > config.mask[0], dtype=np.float32) + \
                      config.mask[2] * np.array(abs(y) <= config.mask[0], dtype=np.float32)
-        return np.array(thresholds + np.random.random_sample(thresholds.shape), dtype=np.float32) * (y != 0)
+        mask = np.array(thresholds + np.random.random_sample(thresholds.shape), dtype=np.float32) * (y != 0)
     else:
         print("wrong argument for get_scores_mask!! mask=" + str(config.mask))
         exit()
+    if config.first_scores_mask > 0:
+        mask[:, :config.first_scores_mask] = 0
+    return mask
 
 
 def get_noise(m, drop_i, drop_h, drop_o, drop_l, drop_e, drop_g):
@@ -367,3 +373,12 @@ def get_glob_feat_idx_list(conf):
     else:
         print("non valid configuration for get_glob_feat_idx_list (conf=" + str(conf) + ").. exiting!")
         exit()
+
+
+def get_offset_indices(tars, num_steps):
+    start_time = time.time()
+    mask = np.zeros_like(tars, dtype=bool)
+    offset_vec = np.random.randint(0,num_steps, tars.shape[0])
+    for c in range(tars.shape[0]):
+        mask[c, offset_vec[c]:offset_vec[c]+num_steps] = True
+    return np.where(mask)

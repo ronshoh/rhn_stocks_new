@@ -44,7 +44,7 @@ class Config():
     drop_l = 0.5
     drop_g = 0.3
     glob_feat_groups = "groups1" # can be "none"/"groups1"/groups2"
-    glob_feat_in_size = 10
+    glob_feat_in_size = 0
     glob_feat_conf = "conf_1"
 
     estimation_flag = True
@@ -58,14 +58,16 @@ class Config():
     mc_steps = 4
     mc_drop_i = 0.0
     mc_drop_e = 0.0
-    mc_drop_h = 0.2
-    mc_drop_o = 0.5
-    mc_drop_l = 0.5
-    mc_drop_g = 0.5
+    mc_drop_h = 0.0
+    mc_drop_o = 0.0
+    mc_drop_l = 0.0
+    mc_drop_g = 0.0
 
     # windows
     reset_weights_flag = True
     start_time = 4000
+    first_scores_mask = 0
+    offset_flag = False
     wind_step_size = 100
     switch_to_asgd = 30
     decay_epochs = [15,23,30]
@@ -86,10 +88,13 @@ get_command_line_args(Config)
 def run_full_epoch(session, m, feats, glob_feats, tars, eval_op, config, verbose=False, test_wind="all", asgd_flag=False):
     prediction_tot = np.zeros_like(tars)
     num_steps = m.num_steps
-    epoch_size = feats.shape[1] // num_steps
+    epoch_size = (feats.shape[1] // num_steps - 1) if config.offset_flag else feats.shape[1] // num_steps
     if test_wind=="all":
         test_wind = [0, epoch_size]
     start_time = time.time()
+
+    if config.offset_flag:
+        offset_mask = get_offset_indices(tars, num_steps)
 
     grad_sum = 0.0
     max_grad = 0.0
@@ -103,11 +108,19 @@ def run_full_epoch(session, m, feats, glob_feats, tars, eval_op, config, verbose
             m.assign_lr(session, 0.0)
         elif i==1 and verbose:
             m.assign_lr(session, lr)
-        x = feats[:, i * num_steps:(i + 1) * num_steps,:]
-        y = tars[:, i * num_steps:(i + 1) * num_steps]
+        if config.offset_flag:
+            x = feats[offset_mask].reshape(feats.shape[0], num_steps, feats.shape[2])
+            y = tars[offset_mask].reshape(feats.shape[0], num_steps)
+            offset_mask[1][:] += num_steps
+        else:
+            x = feats[:, i * num_steps:(i + 1) * num_steps,:]
+            y = tars[:, i * num_steps:(i + 1) * num_steps]
 
         scores_mask = get_scores_mask(y, config)
         if config.glob_feat_in_size != 0:
+            if config.offset_flag:
+                print("currently not supporting offset while using global features.. exiting")
+                exit()
             x_g = glob_feats[i * num_steps:(i + 1) * num_steps, :]
             feed_dict = {m.input_data: x, m.input_data_glob: x_g, m.targets: y, m.mask: scores_mask,
                         m.noise_i: noise_i, m.noise_h: noise_h, m.noise_o: noise_o, m.noise_g: noise_g}
@@ -212,6 +225,8 @@ def run_algo():
     test_config.drop_l = 0.0
     test_config.drop_e = 0.0
     test_config.drop_g = 0.0
+    test_config.offset_flag = 0
+    test_config.first_scores_mask = 0
     test_config.num_steps = 1
     # test_config.batch_size = targets.shape[0]
 
