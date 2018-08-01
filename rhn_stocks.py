@@ -134,6 +134,45 @@ class Model(object):
 
             scores = tf.reduce_sum(experts_scores * prior, axis=1)
 
+        # elif n_experts > 1 and h_last > 1 and config.regress_per_case==1:
+        #     if out_size != 1:
+        #         print("bye bye 1")
+        #         exit()
+        #     self._noise_l = tf.placeholder(tf.float32, [batch_size, 1, n_experts*h_last])
+        #     w_latent =  tf.get_variable("w_latent", [size, n_experts*h_last])
+        #     b_latent = tf.get_variable("b_latent", [n_experts*h_last], initializer=tf.zeros_initializer())
+        #
+        #     latent = tf.tanh(tf.matmul(output, w_latent) + b_latent)
+        #
+        #
+        #
+        #
+        #
+        #
+        #
+        #
+        #
+        #
+        #     latent = tf.reshape(latent, [batch_size, num_steps, n_experts*h_last])
+        #
+        #     latent = tf.reshape(latent * self._noise_l, [-1, h_last])
+        #
+        #     w_out_mat = tf.get_variable("w_out_mat", [h_last, out_size])
+        #     b_out_mat = tf.get_variable("b_out_mat", [out_size], initializer=tf.zeros_initializer())
+        #
+        #     experts_scores = tf.matmul(latent, w_out_mat) + b_out_mat
+        #
+        #     experts_scores = tf.reshape(experts_scores, [-1, n_experts, out_size])
+        #
+        #     w_prior =  tf.get_variable("w_prior", [size, n_experts])
+        #     b_prior = tf.get_variable("b_prior", [n_experts], initializer=tf.zeros_initializer())
+        #
+        #     prior_logits = tf.matmul(output, w_prior) + b_prior
+        #     prior = tf.nn.softmax(prior_logits)
+        #
+        #     prior = tf.expand_dims(prior, 2)
+        #
+        #     scores = tf.reduce_sum(experts_scores * prior, axis=1)
         else:
             print("non valid value for number of expert.. must be greater then 0! exiting")
             scores = []
@@ -185,6 +224,8 @@ class Model(object):
                 optimizer_ad = tf.train.AdamOptimizer(self.lr)
             elif config.adaptive_optimizer == "RMSProp":
                 optimizer_ad = tf.train.RMSPropOptimizer(self.lr)
+            elif config.adaptive_optimizer == "SGD":
+                optimizer_ad = tf.train.GradientDescentOptimizer(self.lr)
             else:
                 print("invalid optimizer option.. exiting!")
                 optimizer_ad = []

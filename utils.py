@@ -53,6 +53,7 @@ def get_command_line_args(Config):
     ap.add_argument("--decay_epochs", type=int, nargs='*', default=None,
                     help='list of what epochs to decay learning rate')
     ap.add_argument("--learning_rate", type=float, nargs=1, default=None, help='initial learning rate')
+    ap.add_argument("--feat_corr_treshold", type=float, nargs=1, default=None, help='treshold for masking features')
     ap.add_argument("--lr_decay", type=float, nargs='*', default=None, help='list of what decays to use')
     ap.add_argument("--max_max_epoch", type=int, nargs=1, default=None, help='number of total epochs')
     ap.add_argument("--DB_name", type=str, nargs=1, default=None, help='database name')
@@ -111,6 +112,22 @@ def get_relevant_features_idx(arg):
     else:
         print("wrong argument for \'get_relevant_features_idx\'!! exiting")
         exit()
+
+
+def get_non_high_corr_features(tr):
+    remain_ind = []
+    corr_mat = scipy.io.loadmat('features_correlation.mat')['corr_mat']
+    removed_feat = []
+    for i in range(corr_mat.shape[1]):
+        for j in range(i + 1, corr_mat.shape[1]):
+            if (i in removed_feat) or (j in removed_feat): continue
+            if abs(corr_mat[i, j]) > tr:
+                removed_feat.append(j)
+    print("removed %d features. treshold was %f" % (len(removed_feat), tr))
+    for i in range(corr_mat.shape[1]):
+        if i not in removed_feat:
+            remain_ind.append(i)
+    return remain_ind
 
 
 def get_scores_mask(y, config):

@@ -46,11 +46,12 @@ class Config():
     glob_feat_groups = "groups1" # can be "none"/"groups1"/groups2"
     glob_feat_in_size = 0
     glob_feat_conf = "conf_1"
+    feat_corr_treshold = 1
 
     estimation_flag = True
     estimation_epoch = 5
 
-    # which optimmizer to use - "RMSProp" "Adam"
+    # which optimmizer to use - "RMSProp" "Adam" "SGD"
     adaptive_optimizer = "RMSProp"
 
     # monte carlo estimation
@@ -588,7 +589,13 @@ for k, v in f.items():
 
 targets = np.transpose(data["targets"], [2, 0, 1])
 
-features = np.transpose(data["features"], [2, 0, 1])
+data["features"] = np.transpose(data["features"], [1, 0, 2])
+
+valid_idx = get_non_high_corr_features(config.feat_corr_treshold)
+data["features"] = data["features"][valid_idx]
+
+features = np.transpose(data["features"], [2, 1, 0])
+
 
 del data
 del v
